@@ -4,7 +4,7 @@ Converte scores dos modelos em probabilidades reais e bem calibradas.
 Calcula Brier Score e ECE (Expected Calibration Error).
 """
 import numpy as np
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict
 from sklearn.linear_model import LogisticRegression
 from sklearn.calibration import calibration_curve
 import logging
@@ -156,6 +156,3 @@ class PlattCalibration:
             'n_samples': len(predicted_probs)
         }
 
-
-# Importação para evitar erro no ensemble.py
-from typing import Dict

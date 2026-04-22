@@ -79,10 +79,11 @@ def dixon_coles_log_likelihood(
         if tau <= 0:
             return 1e10  # Penalidade para parâmetros inválidos
         
+        eps = 1e-10
         log_lik += w * (
-            np.log(tau) +
-            np.log(poisson.pmf(hg, lambda_)) +
-            np.log(poisson.pmf(ag, mu_))
+            np.log(max(tau, eps)) +
+            np.log(max(poisson.pmf(hg, lambda_), eps)) +
+            np.log(max(poisson.pmf(ag, mu_), eps))
         )
     
     return -log_lik  # Negativo porque minimizamos

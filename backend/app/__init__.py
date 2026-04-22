@@ -20,7 +20,11 @@ def create_app(config_name='default'):
     # Extensões
     db.init_app(app)
     migrate.init_app(app, db)
-    CORS(app, origins=['http://localhost:5173', 'http://localhost:3000'])
+    CORS(app, origins=[
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:3000',
+    ])
     
     # Blueprints
     from app.routes.games import games_bp

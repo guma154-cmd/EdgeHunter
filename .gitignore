@@ -1,0 +1,82 @@
+# ========================
+# Python / Backend
+# ========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.spec
+
+# Virtualenv
+venv/
+.venv/
+env/
+
+# Ambiente
+backend/.env
+.env
+
+# Database
+database/
+*.db
+*.sqlite3
+
+# ML models / artefatos grandes
+*.pkl
+*.joblib
+*.model
+*.bin
+models_saved/
+
+# Logs
+*.log
+logs/
+
+# ========================
+# Node / Frontend
+# ========================
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/build/
+
+# ========================
+# Sistema operacional
+# ========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========================
+# IDEs
+# ========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ========================
+# Jupyter
+# ========================
+.ipynb_checkpoints/
+*.ipynb
+
+# ========================
+# Cobertura / Testes
+# ========================
+.coverage
+htmlcov/
+.pytest_cache/
+
+# ========================
+# Misc
+# ========================
+*.bak
+*.tmp

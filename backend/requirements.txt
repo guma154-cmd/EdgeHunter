@@ -1,0 +1,16 @@
+flask>=3.0.3
+flask-sqlalchemy>=3.1.1
+flask-cors>=4.0.1
+flask-migrate>=4.0.7
+APScheduler>=3.10.4
+xgboost>=2.1.0
+scikit-learn>=1.5.0
+numpy>=2.0.0
+pandas>=2.2.2
+scipy>=1.13.0
+river>=0.21.2
+python-telegram-bot>=21.3
+requests>=2.31.0
+python-dotenv>=1.0.1
+pytz>=2024.1
+joblib>=1.4.2

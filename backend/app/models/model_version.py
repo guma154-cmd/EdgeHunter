@@ -33,7 +33,7 @@ class ModelVersion(db.Model):
     promoted_at = db.Column(db.DateTime, nullable=True)
     
     # Relacionamentos
-    predictions = db.relationship('Prediction', backref='model_version', lazy=True)
+    predictions = db.relationship('Prediction', backref='model_version_obj', lazy=True)
     performances = db.relationship('Performance', backref='model_version', lazy=True)
     
     @property

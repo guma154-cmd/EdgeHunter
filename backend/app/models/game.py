@@ -81,6 +81,7 @@ class Prediction(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     game_id = db.Column(db.Integer, db.ForeignKey('games.id'), nullable=False)
     model_version_id = db.Column(db.Integer, db.ForeignKey('model_versions.id'), nullable=True)
+    model_version = db.Column(db.String(50), nullable=True)  # string de versão para inserção rápida
     
     # Probabilidades individuais de cada modelo
     dixon_coles_home = db.Column(db.Float, nullable=True)

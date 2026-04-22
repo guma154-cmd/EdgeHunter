@@ -168,6 +168,7 @@ class ModelEnsemble:
         
         self.historical_df = None
         self.is_ready = False
+        self._xgb_retrain_pending = 0  # CORRECAO 6 — contador para batch retraining do XGBoost
     
     def train(self, matches_df) -> 'ModelEnsemble':
         """Treina todos os modelos."""
@@ -281,14 +282,14 @@ class ModelEnsemble:
     def online_update(
         self, home_team: str, away_team: str, home_goals: int, away_goals: int
     ):
-        """Atualização online após resultado real."""
-        # Atualizar Elo
+        """Atualizacao online apos resultado real."""
+        # Atualizar Elo (online nativo)
         self.elo.update(home_team, away_team, home_goals, away_goals)
         
-        # Atualizar Bayesiano
+        # Atualizar Bayesiano (online nativo)
         self.bayesian.online_update(home_team, away_team, home_goals, away_goals)
         
-        # Adicionar ao histórico
+        # Adicionar ao historico
         import pandas as pd
         new_row = pd.DataFrame([{
             'home_team': home_team,
@@ -302,6 +303,16 @@ class ModelEnsemble:
             self.historical_df = pd.concat(
                 [self.historical_df, new_row], ignore_index=True
             )
+        
+        # CORRECAO 6 — XGBoost retrain batch a cada 50 novos resultados
+        self._xgb_retrain_pending += 1
+        if self._xgb_retrain_pending >= 50:
+            try:
+                self.xgboost.fit(self.historical_df, self.elo.ratings)
+                self._xgb_retrain_pending = 0
+                logger.info("XGBoost atualizado via online batch (50 resultados)")
+            except Exception as e:
+                logger.error(f"XGBoost batch update falhou: {e}")
         
         logger.info(f"Online update: {home_team} {home_goals}-{away_goals} {away_team}")
 
@@ -325,3 +336,46 @@ def _set_global_ensemble(ensemble: 'ModelEnsemble', challenger: bool = False):
     else:
         _global_ensemble = ensemble
         logger.info("Global ensemble atualizado")
+
+
+# =========================================================
+# CORRECAO 5 — A/B Test: promocao do challenger
+# =========================================================
+
+def _get_avg_brier(ensemble_model: 'ModelEnsemble') -> Optional[float]:
+    """Calcula Brier Score medio do ensemble com base no historico acumulado."""
+    history = ensemble_model.ensemble.brier_history
+    all_scores = [s for scores in history.values() for s in scores]
+    return float(np.mean(all_scores)) if len(all_scores) >= 10 else None
+
+
+def promote_challenger_if_better() -> bool:
+    """
+    Promove challenger a champion se Brier Score for inferior (melhor).
+    Retorna True se a promocao ocorreu.
+    """
+    global _global_ensemble, _global_challenger
+    
+    if not _global_challenger or not _global_ensemble:
+        return False
+    
+    challenger_brier = _get_avg_brier(_global_challenger)
+    champion_brier = _get_avg_brier(_global_ensemble)
+    
+    if challenger_brier is None or champion_brier is None:
+        logger.info("A/B Test: historico insuficiente para comparacao")
+        return False
+    
+    if challenger_brier < champion_brier:
+        logger.info(
+            f"Challenger promovido: {challenger_brier:.4f} < {champion_brier:.4f}"
+        )
+        _global_ensemble = _global_challenger
+        _global_challenger = None
+        return True
+    else:
+        logger.info(
+            f"Champion mantido: {champion_brier:.4f} <= {challenger_brier:.4f}"
+        )
+        _global_challenger = None
+        return False

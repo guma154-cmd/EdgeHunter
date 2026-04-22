@@ -80,3 +80,8 @@ htmlcov/
 # ========================
 *.bak
 *.tmp
+
+# Arquivos pessoais/binarios
+*.pdf
+*.zip
+Pinacle.png

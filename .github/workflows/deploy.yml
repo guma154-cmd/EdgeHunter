@@ -1,0 +1,35 @@
+name: Deploy EdgeHunter
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Verificar .env no servidor
+        run: |
+          if [ ! -f backend/.env ]; then
+            echo "ERRO: backend/.env não encontrado no servidor"
+            exit 1
+          fi
+
+      - name: Build e restart containers
+        run: |
+          docker-compose down --remove-orphans
+          docker-compose build --no-cache
+          docker-compose up -d
+
+      - name: Verificar saúde do container
+        run: |
+          sleep 15
+          docker-compose ps
+          curl -f http://localhost:5000/api/health || exit 1
+
+      - name: Log de startup
+        run: |
+          docker-compose logs --tail=30 backend

@@ -24,6 +24,7 @@ backend/.env
 
 # Database
 database/
+backend/database/
 *.db
 *.sqlite3
 
@@ -33,6 +34,7 @@ database/
 *.model
 *.bin
 models_saved/
+backend/models/
 
 # Logs
 *.log

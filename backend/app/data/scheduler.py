@@ -76,8 +76,24 @@ def start_scheduler(app):
         replace_existing=True
     )
     
+    # Heartbeat a cada 2 horas
+    scheduler.add_job(
+        func=lambda: _heartbeat_task(app),
+        trigger=IntervalTrigger(hours=2),
+        id='heartbeat',
+        name='Heartbeat Telegram',
+        replace_existing=True
+    )
+    
     scheduler.start()
     logger.info("✅ Scheduler iniciado com todas as tarefas")
+    
+    # Envio imediato do primeiro heartbeat
+    try:
+        _heartbeat_task(app)
+    except Exception as e:
+        logger.error(f"Erro no heartbeat inicial: {e}")
+        
     return scheduler
 
 
@@ -613,3 +629,36 @@ def _ab_promotion_task(app):
             logger.info(f"A/B Test: {'Challenger promovido' if promoted else 'Champion mantido'}")
         except Exception as e:
             logger.error(f"Erro no A/B promotion task: {e}")
+
+
+def _heartbeat_task(app):
+    with app.app_context():
+        try:
+            from app.alerts.telegram_bot import send_heartbeat
+            from app.engine.ensemble import _get_global_ensemble
+            from app.engine.gemini_engine import get_ai_engine
+            from app.models import Bet
+            from datetime import datetime, date
+
+            ensemble = _get_global_ensemble()
+            ai = get_ai_engine()
+
+            today = date.today()
+            bets_today = Bet.query.filter(
+                Bet.timestamp >= datetime.combine(
+                    today, datetime.min.time()
+                )
+            ).count()
+
+            scheduler = get_scheduler()
+            jobs = scheduler.get_jobs()
+
+            send_heartbeat(
+                scheduler_jobs=jobs,
+                ensemble_ready=ensemble is not None and ensemble.is_ready,
+                ai_active=ai is not None,
+                bets_today=bets_today
+            )
+            logger.info("💓 Heartbeat enviado com sucesso!")
+        except Exception as e:
+            logger.error(f"Erro no heartbeat: {e}")

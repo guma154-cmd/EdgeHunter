@@ -219,3 +219,36 @@ o modelo <b>{new_version}</b> superou o campeão anterior.
     def test_connection(self) -> bool:
         """Testa a conexão com o Telegram."""
         return self._send("🤖 EdgeHunter conectado com sucesso! Sistema de value betting ativo.")
+
+
+def send_message(text: str, parse_mode: str = 'Markdown'):
+    """Função auxiliar para enviar mensagens rápidas via Telegram."""
+    from flask import current_app
+    token = current_app.config.get('TELEGRAM_BOT_TOKEN')
+    chat_id = current_app.config.get('TELEGRAM_CHAT_ID')
+    if not token or not chat_id:
+        return False
+    
+    bot = TelegramBot(token, chat_id)
+    return bot._send(text, parse_mode=parse_mode)
+
+
+def send_heartbeat(scheduler_jobs: list, ensemble_ready: bool,
+                   ai_active: bool, bets_today: int):
+    """Envia status do sistema a cada 2 horas."""
+    from datetime import datetime
+    now = datetime.utcnow().strftime('%d/%m %H:%M')
+    
+    status_ensemble = "✅" if ensemble_ready else "❌"
+    status_ai = "✅" if ai_active else "❌"
+    
+    msg = (
+        f"💓 *EdgeHunter — Heartbeat*\n"
+        f"🕐 {now} UTC\n\n"
+        f"{status_ensemble} Ensemble ativo\n"
+        f"{status_ai} IA híbrida (Gemini + Groq)\n"
+        f"⚙️ Scheduler: {len(scheduler_jobs)} jobs rodando\n"
+        f"🎯 Value bets hoje: {bets_today}\n\n"
+        f"_Sistema operacional_ 🟢"
+    )
+    send_message(msg)

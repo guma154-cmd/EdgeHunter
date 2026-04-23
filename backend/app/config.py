@@ -24,6 +24,7 @@ class Config:
     FOOTBALL_DATA_API_KEY = os.environ.get('FOOTBALL_DATA_API_KEY', '')
     RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', '')
     APIFOOTBALL_KEY = os.environ.get('APIFOOTBALL_KEY', '')
+    ODDSAPIIO_KEY = os.environ.get('ODDSAPIIO_KEY', '')
     ODDS_API_BASE_URL = 'https://api.the-odds-api.com/v4'
     FOOTBALL_DATA_BASE_URL = 'https://api.football-data.org/v4'
     

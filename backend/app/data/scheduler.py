@@ -104,6 +104,7 @@ def _fetch_odds_task(app):
             from flask import current_app
             from app.data.odds_api import OddsAPIClient
             from app.data.apifootball_client import APIFootballClient
+            from app.data.oddsapiio_client import OddsApiIoClient
             from app.models import Game, Bet, Surebet, SurebetStat
             from app import db
             from app.alerts.telegram_bot import TelegramBot, send_surebet_alert
@@ -111,24 +112,36 @@ def _fetch_odds_task(app):
             
             api_key = current_app.config['ODDS_API_KEY']
             apif_key = current_app.config.get('APIFOOTBALL_KEY')
+            oddsio_key = current_app.config.get('ODDSAPIIO_KEY')
             
             games = []
-            if apif_key:
+            
+            # 1. Odds-api.io (Principal - 100 req/hora)
+            if oddsio_key:
                 try:
-                    logger.info("Buscando odds na API-Football Direct...")
+                    logger.info("Buscando odds no Odds-API.io (Principal)...")
+                    oddsio_client = OddsApiIoClient(oddsio_key)
+                    games = oddsio_client.fetch_games_with_odds()
+                except Exception as e:
+                    logger.error(f"Erro no Odds-API.io: {e}")
+
+            # 2. The Odds API (Fallback)
+            if not games and api_key:
+                try:
+                    logger.info("The Odds API Fallback...")
+                    client = OddsAPIClient(api_key)
+                    games = client.fetch_all_value_games()
+                except Exception as e:
+                    logger.error(f"Erro na Odds API: {e}")
+
+            # 3. API-Football (Fallback)
+            if not games and apif_key:
+                try:
+                    logger.info("API-Football Direct Fallback...")
                     apif_client = APIFootballClient(apif_key)
                     games = apif_client.fetch_odds()
                 except Exception as e:
                     logger.error(f"Erro na API-Football: {e}")
-
-            if not games and api_key:
-                try:
-                    logger.info("Odds API Fallback...")
-                    client = OddsAPIClient(api_key)
-                    # Usando fetch_all_value_games que retorna estrutura similar
-                    games = client.fetch_all_value_games()
-                except Exception as e:
-                    logger.error(f"Erro na Odds API: {e}")
             
             if not games:
                 logger.warning("Nenhum jogo retornado. Todas as APIs indisponíveis.")

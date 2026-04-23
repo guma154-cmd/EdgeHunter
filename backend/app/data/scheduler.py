@@ -190,6 +190,55 @@ def _fetch_odds_task(app):
                         game_data.get('soft_odds', {})
                     )
                     
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+                    from app.engine.gemini_engine import get_ai_engine
+                    ai = get_ai_engine()
+
+                    def analyze_opportunity(opp):
+                        """Analisa uma oportunidade em thread separada."""
+                        try:
+                            result = ai.analyze(
+                                home_team=game_data['home_team'],
+                                away_team=game_data['away_team'],
+                                league=game_data.get('league', 'Desconhecida'),
+                                selection=opp['selection'],
+                                odds=opp['odd'],
+                                bookmaker=opp['bookmaker'],
+                                our_prob=opp['our_prob'],
+                                implied_prob=opp['implied_prob'],
+                                edge_pct=opp['edge_pct'],
+                                pinnacle_prob=opp.get('pinnacle_fair_prob'),
+                                model_weights=prediction.get('weights', {}),
+                                match_date=str(game_data.get('match_date', ''))
+                            )
+                            return opp, result
+                        except Exception as e:
+                            logger.error(f"Erro ao analisar oportunidade: {e}")
+                            return opp, {'decision': 'NO-GO',
+                                        'reasoning': f'Erro: {e}',
+                                        'confidence': 0,
+                                        'risk_flags': ['thread_error']}
+
+                    if ai and opportunities:
+                        # Máximo 5 threads paralelas para não saturar rate limit
+                        with ThreadPoolExecutor(max_workers=5) as executor:
+                            futures = {
+                                executor.submit(analyze_opportunity, opp): opp
+                                for opp in opportunities
+                            }
+                            approved = []
+                            for future in as_completed(futures):
+                                opp, ai_result = future.result()
+                                if ai_result.get('decision') == 'GO':
+                                    opp['ai_result'] = ai_result
+                                    approved.append(opp)
+                                else:
+                                    logger.info(
+                                        f"[IA] NO-GO: {game_data['home_team']} vs {game_data['away_team']} — "
+                                        f"{opp['selection']} — {ai_result.get('reasoning', '')}"
+                                    )
+                            opportunities = approved
+
                     for opp in opportunities:
                         # Verificar se já apostamos neste jogo/seleção/casa
                         existing_bet = Bet.query.filter_by(
@@ -200,35 +249,6 @@ def _fetch_odds_task(app):
                         ).first()
                         
                         if not existing_bet:
-                            # ── Filtro Motor IA Hibrido ───────────────────────
-                            from app.engine.gemini_engine import get_ai_engine
-                            ai = get_ai_engine()
-                            
-                            if ai:
-                                ai_result = ai.analyze(
-                                    home_team=game_data['home_team'],
-                                    away_team=game_data['away_team'],
-                                    league=game_data.get('league', 'Desconhecida'),
-                                    selection=opp['selection'],
-                                    odds=opp['odd'],
-                                    bookmaker=opp['bookmaker'],
-                                    our_prob=opp['our_prob'],
-                                    implied_prob=opp['implied_prob'],
-                                    edge_pct=opp['edge_pct'],
-                                    pinnacle_prob=opp.get('pinnacle_fair_prob'),
-                                    model_weights=prediction.get('weights', {}),
-                                    match_date=str(game_data.get('match_date', ''))
-                                )
-                                if ai_result.get('decision') == 'NO-GO':
-                                    logger.info(
-                                        f"[IA] NO-GO: {game_data['home_team']} vs "
-                                        f"{game_data['away_team']} — {ai_result.get('reasoning', '')}"
-                                    )
-                                    continue
-                                
-                                # Armazenar resultado da IA para o alerta
-                                opp['ai_result'] = ai_result
-                            # ─────────────────────────────────────────────────
 
                             bet = Bet(
                                 game_id=game.id,
@@ -512,19 +532,70 @@ def _update_metrics_task(app):
             if ensemble:
                 bets_with_prob = [b for b in recent_bets if b.our_prob]
                 if bets_with_prob:
-                    avg_brier = float(np.mean([
-                        (b.our_prob - (1 if b.result == 'won' else 0)) ** 2
-                        for b in bets_with_prob
-                    ]))
-                    # Proxy diferenciado por modelo (fase 2: usar Brier por sub-modelo via Prediction)
-                    model_brier_scores = {
-                        'dixon_coles': avg_brier * 0.98,
-                        'elo':         avg_brier * 1.02,
-                        'xgboost':     avg_brier * 0.97,
-                        'bayesian':    avg_brier * 1.03
-                    }
-                    ensemble.ensemble.update_weights_from_brier(model_brier_scores)
-                    logger.info(f"Pesos do ensemble atualizados via Brier Score: {avg_brier:.4f}")
+                    from app.models.game import Prediction
+                    from app.models import Game
+                
+                    model_brier_scores = {}
+                    sub_models = ['dixon_coles', 'elo', 'xgboost', 'bayesian']
+                
+                    for model_name in sub_models:
+                        # Buscar predições com resultado conhecido
+                        preds_with_results = db.session.query(
+                            Prediction, Game
+                        ).join(
+                            Game, Prediction.game_id == Game.id
+                        ).filter(
+                            Game.status == 'finished',
+                            Game.home_score.isnot(None),
+                            Prediction.created_at >= cutoff
+                        ).all()
+                
+                        if not preds_with_results:
+                            continue
+                
+                        brier_scores = []
+                        for pred, game in preds_with_results:
+                            # Resultado real como vetor one-hot
+                            if game.home_score > game.away_score:
+                                true_vec = (1, 0, 0)
+                            elif game.home_score == game.away_score:
+                                true_vec = (0, 1, 0)
+                            else:
+                                true_vec = (0, 0, 1)
+                
+                            # Probabilidades do sub-modelo específico
+                            if model_name == 'dixon_coles':
+                                p = (pred.dixon_coles_home or 1/3,
+                                     pred.dixon_coles_draw or 1/3,
+                                     pred.dixon_coles_away or 1/3)
+                            elif model_name == 'elo':
+                                p = (pred.elo_home or 1/3,
+                                     pred.elo_draw or 1/3,
+                                     pred.elo_away or 1/3)
+                            elif model_name == 'xgboost':
+                                p = (pred.xgboost_home or 1/3,
+                                     pred.xgboost_draw or 1/3,
+                                     pred.xgboost_away or 1/3)
+                            elif model_name == 'bayesian':
+                                p = (pred.bayesian_home or 1/3,
+                                     pred.bayesian_draw or 1/3,
+                                     pred.bayesian_away or 1/3)
+                
+                            # Brier Score multiclasse
+                            bs = sum((p[i] - true_vec[i])**2 for i in range(3)) / 3
+                            brier_scores.append(bs)
+                
+                        if brier_scores:
+                            model_brier_scores[model_name] = float(np.mean(brier_scores))
+                            logger.info(
+                                f"Brier Score real — {model_name}: "
+                                f"{model_brier_scores[model_name]:.4f} "
+                                f"({len(brier_scores)} amostras)"
+                            )
+                
+                    if model_brier_scores:
+                        ensemble.ensemble.update_weights_from_brier(model_brier_scores)
+                        logger.info(f"Pesos reais atualizados: {model_brier_scores}")
             
             db.session.commit()
             logger.info(f"Metricas atualizadas: Sharpe={sharpe:.2f}, ROI={np.mean(rois) if rois else 0:.2f}%")

@@ -124,7 +124,7 @@ class FootballDataClient:
         df = pd.DataFrame(all_matches)
         
         if not df.empty:
-            df['match_date'] = pd.to_datetime(df['match_date'])
+            df['match_date'] = pd.to_datetime(df['match_date']).dt.tz_localize(None)
             df = df.sort_values('match_date').reset_index(drop=True)
             logger.info(f"Total: {len(df)} partidas históricas carregadas")
         

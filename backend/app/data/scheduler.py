@@ -105,6 +105,7 @@ def _fetch_odds_task(app):
             from app.data.odds_api import OddsAPIClient
             from app.data.apifootball_client import APIFootballClient
             from app.data.oddsapiio_client import OddsApiIoClient
+            from app.data.oddsportal_scraper import fetch_games_sync
             from app.models import Game, Bet, Surebet, SurebetStat
             from app import db
             from app.alerts.telegram_bot import TelegramBot, send_surebet_alert
@@ -116,16 +117,25 @@ def _fetch_odds_task(app):
             
             games = []
             
-            # 1. Odds-api.io (Principal - 100 req/hora)
-            if oddsio_key:
+            # 1. OddsPortal Scraper (Principal — Sem limites)
+            try:
+                logger.info("Iniciando OddsPortal Scraper (Fonte Primária)...")
+                games = fetch_games_sync()
+                if games:
+                    logger.info(f"OddsPortal: {len(games)} jogos coletados com sucesso.")
+            except Exception as e:
+                logger.error(f"Erro no OddsPortal Scraper: {e}")
+
+            # 2. Odds-api.io (Fallback 1)
+            if not games and oddsio_key:
                 try:
-                    logger.info("Buscando odds no Odds-API.io (Principal)...")
+                    logger.info("OddsPortal falhou ou sem jogos → Fallback para Odds-API.io...")
                     oddsio_client = OddsApiIoClient(oddsio_key)
                     games = oddsio_client.fetch_games_with_odds()
                 except Exception as e:
                     logger.error(f"Erro no Odds-API.io: {e}")
 
-            # 2. The Odds API (Fallback)
+            # 3. The Odds API (Fallback 2)
             if not games and api_key:
                 try:
                     logger.info("The Odds API Fallback...")

@@ -75,6 +75,15 @@ class SurebetDetector:
                         guaranteed_return = stake_A * odd_A
                         guaranteed_profit = guaranteed_return - total_stake
 
+                        # Verificar se é "Sharp Verified" (confirmado pela Pinnacle)
+                        pinnacle_odds = soft_books.get('pinnacle', {})
+                        is_sharp_verified = False
+                        if pinnacle_odds:
+                            # Se a odd da Pinnacle é menor que a odd oferecida, o edge é mais provável de ser real
+                            pinn_odd = pinnacle_odds.get(outcome_A)
+                            if pinn_odd and pinn_odd < odd_A:
+                                is_sharp_verified = True
+
                         opportunities.append({
                             'home_team': game_data['home_team'],
                             'away_team': game_data['away_team'],
@@ -92,7 +101,9 @@ class SurebetDetector:
                             'guaranteed_profit': round(guaranteed_profit, 2),
                             'profit_pct': round(profit_pct, 2),
                             'roi': round(profit_pct, 2),
-                            'arb_index': round(arb, 4)
+                            'arb_index': round(arb, 4),
+                            'is_sharp_verified': is_sharp_verified,
+                            'is_premium': (book_A == 'pinnacle' or book_B == 'pinnacle')
                         })
 
         # Ordenar por maior lucro

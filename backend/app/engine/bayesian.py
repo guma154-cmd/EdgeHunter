@@ -38,17 +38,11 @@ class BayesianModel:
         self.prior_strength = prior_strength
         
         # Contadores por par de times (H2H direto)
-        self.h2h_counts: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: {'home': 0.0, 'draw': 0.0, 'away': 0.0}
-        )
+        self.h2h_counts: Dict[str, Dict[str, float]] = {}
         
         # Contadores por time em casa e fora
-        self.home_counts: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: {'home': 0.0, 'draw': 0.0, 'away': 0.0}
-        )
-        self.away_counts: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: {'home': 0.0, 'draw': 0.0, 'away': 0.0}
-        )
+        self.home_counts: Dict[str, Dict[str, float]] = {}
+        self.away_counts: Dict[str, Dict[str, float]] = {}
         
         # Contadores globais
         self.global_counts = {'home': 0.0, 'draw': 0.0, 'away': 0.0}
@@ -72,6 +66,13 @@ class BayesianModel:
         Suporta peso fracionário (decay temporal).
         """
         key = self._h2h_key(home_team, away_team)
+        
+        if key not in self.h2h_counts:
+            self.h2h_counts[key] = {'home': 0.0, 'draw': 0.0, 'away': 0.0}
+        if home_team not in self.home_counts:
+            self.home_counts[home_team] = {'home': 0.0, 'draw': 0.0, 'away': 0.0}
+        if away_team not in self.away_counts:
+            self.away_counts[away_team] = {'home': 0.0, 'draw': 0.0, 'away': 0.0}
         
         if home_goals > away_goals:
             outcome = 'home'

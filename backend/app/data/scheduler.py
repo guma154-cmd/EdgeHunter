@@ -87,18 +87,34 @@ def _fetch_odds_task(app):
         try:
             from flask import current_app
             from app.data.odds_api import OddsAPIClient
+            from app.data.rapidapi_client import RapidAPIClient
             from app.detection.value_detector import ValueDetector
             from app.models import Game, Bet
             from app import db
             from app.alerts.telegram_bot import TelegramBot
             
             api_key = current_app.config['ODDS_API_KEY']
-            if not api_key:
-                logger.debug("Odds API key não configurada")
-                return
+            rapidapi_key = current_app.config.get('RAPIDAPI_KEY')
             
-            client = OddsAPIClient(api_key)
-            games = client.fetch_all_value_games()
+            games = []
+            if api_key:
+                try:
+                    client = OddsAPIClient(api_key)
+                    games = client.fetch_all_value_games()
+                except Exception as e:
+                    logger.error(f"Erro na Odds API: {e}")
+            
+            if not games and rapidapi_key:
+                try:
+                    logger.info("Usando RapidAPI como fallback para odds...")
+                    client = RapidAPIClient(rapidapi_key)
+                    games = client.fetch_odds()
+                except Exception as e:
+                    logger.error(f"Erro na RapidAPI: {e}")
+                    
+            if not games:
+                logger.warning("Nenhum jogo retornado. Ambas as APIs indisponíveis ou sem odds.")
+                return
             
             # Carregar ensemble global
             from app.engine.ensemble import _get_global_ensemble
@@ -382,6 +398,7 @@ def _retrain_task(app):
             
             new_ensemble = ModelEnsemble()
             new_ensemble.train(df)
+            new_ensemble.save()
             
             # Registrar nova versão
             version_str = f"v{datetime.utcnow().strftime('%Y%m%d_%H%M')}"

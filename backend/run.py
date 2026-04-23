@@ -19,6 +19,21 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         print("[OK] Database inicializado")
+        
+        from app.engine.ensemble import ModelEnsemble, _set_global_ensemble
+        import os
+        
+        # Carregar ensemble do disco ou alertar para treinar do zero
+        if ModelEnsemble.exists():
+            try:
+                ensemble = ModelEnsemble.load()
+                _set_global_ensemble(ensemble)
+                print('[OK] Ensemble carregado do disco')
+            except Exception as e:
+                print(f'[WARN] Falha ao carregar ensemble: {e}')
+                print('[INFO] Execute seed_historical.py para treinar')
+        else:
+            print('[WARN] Ensemble nao encontrado — execute seed_historical.py')
 
     start_scheduler(app)
     print("[OK] Scheduler iniciado")

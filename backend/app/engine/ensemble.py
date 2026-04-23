@@ -152,6 +152,8 @@ class ModelEnsemble:
     Gerencia o ciclo de vida e previsões.
     """
     
+    MODEL_SAVE_PATH = 'models/ensemble_state.joblib'
+    
     def __init__(self):
         from app.engine.dixon_coles import DixonColesModel
         from app.engine.elo import EloModel
@@ -207,6 +209,7 @@ class ModelEnsemble:
         
         self.is_ready = True
         logger.info(f"Ensemble pronto. Pesos: {self.ensemble.get_weights_summary()}")
+        self.save()
         return self
     
     def predict(
@@ -315,6 +318,45 @@ class ModelEnsemble:
                 logger.error(f"XGBoost batch update falhou: {e}")
         
         logger.info(f"Online update: {home_team} {home_goals}-{away_goals} {away_team}")
+
+    def save(self):
+        import joblib
+        import os
+        os.makedirs('models', exist_ok=True)
+        state = {
+            'dixon_coles': self.dixon_coles,
+            'elo': self.elo,
+            'xgboost': self.xgboost,
+            'bayesian': self.bayesian,
+            'ensemble_weights': self.ensemble.weights,
+            'brier_history': self.ensemble.brier_history,
+            'historical_df': self.historical_df,
+            '_xgb_retrain_pending': self._xgb_retrain_pending
+        }
+        joblib.dump(state, self.MODEL_SAVE_PATH)
+        logger.info(f'Ensemble salvo em {self.MODEL_SAVE_PATH}')
+
+    @staticmethod
+    def load() -> 'ModelEnsemble':
+        import joblib
+        state = joblib.load(ModelEnsemble.MODEL_SAVE_PATH)
+        ens = ModelEnsemble()
+        ens.dixon_coles = state['dixon_coles']
+        ens.elo = state['elo']
+        ens.xgboost = state['xgboost']
+        ens.bayesian = state['bayesian']
+        ens.ensemble.weights = state['ensemble_weights']
+        ens.ensemble.brier_history = state['brier_history']
+        ens.historical_df = state['historical_df']
+        ens._xgb_retrain_pending = state['_xgb_retrain_pending']
+        ens.is_ready = True
+        logger.info('Ensemble carregado do disco')
+        return ens
+
+    @staticmethod
+    def exists() -> bool:
+        import os
+        return os.path.exists(ModelEnsemble.MODEL_SAVE_PATH)
 
 
 # =========================================================

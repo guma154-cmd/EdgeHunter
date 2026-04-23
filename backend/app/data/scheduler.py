@@ -565,10 +565,9 @@ def _heartbeat_task(app):
             ai = get_ai_engine()
 
             today = date.today()
-            bets_today = Bet.query.filter(
-                Bet.timestamp >= datetime.combine(
-                    today, datetime.min.time()
-                )
+            surebets_today = Bet.query.filter(
+                Bet.mode == 'paper',
+                Bet.timestamp >= datetime.combine(date.today(), datetime.min.time())
             ).count()
 
             scheduler = get_scheduler()
@@ -578,7 +577,7 @@ def _heartbeat_task(app):
                 scheduler_jobs=jobs,
                 ensemble_ready=ensemble is not None and ensemble.is_ready,
                 ai_active=ai is not None,
-                bets_today=bets_today
+                surebets_today=surebets_today
             )
             logger.info("💓 Heartbeat enviado com sucesso!")
         except Exception as e:

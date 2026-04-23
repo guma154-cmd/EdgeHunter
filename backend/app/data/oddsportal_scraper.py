@@ -32,8 +32,7 @@ LEAGUES_URLS = {
 }
 
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 ]
 
 class OddsPortalScraper:
@@ -58,33 +57,40 @@ class OddsPortalScraper:
                     page = await self.context.new_page()
                     try:
                         await page.goto(url, wait_until="networkidle", timeout=60000)
+                        
+                        # Cookies
+                        try:
+                            btn = page.get_by_role("button", name="Aceito")
+                            if await btn.is_visible(): await btn.click()
+                        except: pass
+                        
                         await page.wait_for_timeout(5000)
                         
-                        links = await page.eval_on_selector_all('a', 'elements => elements.map(e => e.href)')
+                        # Pegar links e textos
+                        links_data = await page.eval_on_selector_all('a', '''elements => elements.map(e => ({
+                            href: e.href,
+                            text: e.innerText
+                        }))''')
                         
-                        # Regex mais flexível para links de partidas
-                        # Procura por qualquer link que tenha o slug da liga e termine com um ID (alfanumérico de 5-10 chars)
                         match_links = []
-                        base_path = url.replace('https://www.oddsagora.com.br', '')
-                        for l in links:
-                            if base_path in l and len(l.split('/')) >= 6:
-                                slug = l.split('/')[-2]
-                                if '-' in slug and len(slug.split('-')[-1]) >= 5:
-                                    if l not in match_links and l != url:
-                                        match_links.append(l)
+                        for l in links_data:
+                            href = l['href']
+                            text = l['text']
+                            # Padrão: links H2H que contêm '#' e têm times no texto
+                            if "/h2h/" in href and "#" in href and "vs" in text.lower():
+                                if href not in [m[0] for m in match_links]:
+                                    match_links.append((href, text))
                         
                         logger.info(f"Encontrados {len(match_links)} links de partidas em {league_name}")
                         
                         count = 0
-                        for match_url in match_links:
+                        for match_url, match_text in match_links:
                             if count >= 3: break
-                            
-                            game_data = await self._scrape_match_odds(page, match_url, league_name)
-                            if game_data and len(game_data.get('all_odds', {})) >= 2:
+                            game_data = await self._scrape_match_odds(page, match_url, league_name, match_text)
+                            if game_data and len(game_data.get('all_odds', {})) >= 1:
                                 all_games.append(game_data)
                                 count += 1
-                                logger.info(f"Coletado: {game_data['home_team']} vs {game_data['away_team']}")
-                            
+                                logger.info(f"Coletado: {game_data['home_team']} vs {game_data['away_team']} ({len(game_data['all_odds'])} casas)")
                             await page.wait_for_timeout(2000)
                             
                     except Exception as e:
@@ -96,32 +102,26 @@ class OddsPortalScraper:
         
         return all_games
 
-    async def _scrape_match_odds(self, page, url, league_name) -> dict:
+    async def _scrape_match_odds(self, page, url, league_name, match_text) -> dict:
         try:
             await page.goto(url, wait_until="networkidle", timeout=60000)
             await page.wait_for_timeout(5000)
             
+            # Times do texto (ex: Sunderland vs Nottingham - 24/04/2026)
+            clean_text = match_text.split('-')[0].strip()
+            if " vs " in clean_text.lower():
+                home_team, away_team = [t.strip() for t in clean_text.split(" vs ")]
+            else:
+                home_team, away_team = "Home", "Away"
+
             content = await page.content()
             soup = BeautifulSoup(content, 'lxml')
             
-            title_tag = soup.find('h1')
-            if not title_tag: return None
-            title_text = title_tag.get_text()
-            if ' - ' not in title_text: return None
-            
-            teams = title_text.split(' - ', 1)
-            home_team = teams[0].strip()
-            away_team = teams[1].strip()
-            
             all_odds = {}
-            # Buscar bookmakers e suas odds
-            # Geralmente as odds estão em divs com classes como 'odds-val' ou em spans
             rows = soup.find_all(['div', 'tr'], recursive=True)
-            
             for row in rows:
                 row_text = row.get_text().lower()
                 bookie_name = None
-                
                 for target, variations in TARGET_BOOKMAKERS.items():
                     if any(v in row_text for v in variations):
                         bookie_name = target
@@ -129,13 +129,11 @@ class OddsPortalScraper:
                 
                 if bookie_name and bookie_name not in all_odds:
                     odds = []
-                    # Procurar por números que pareçam odds
-                    for item in row.find_all(['p', 'span', 'div']):
-                        val_str = item.get_text().strip().replace(',', '.')
+                    for el in row.find_all(['p', 'span']):
+                        t = el.get_text().strip().replace(',', '.')
                         try:
-                            val = float(val_str)
-                            if 1.01 < val < 50.0:
-                                odds.append(val)
+                            v = float(t)
+                            if 1.01 < v < 50.0: odds.append(v)
                         except: continue
                     
                     if len(odds) >= 3:

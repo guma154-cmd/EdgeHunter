@@ -234,21 +234,22 @@ def send_message(text: str, parse_mode: str = 'Markdown'):
 
 
 def send_heartbeat(scheduler_jobs: list, ensemble_ready: bool,
-                   ai_active: bool, bets_today: int):
+                   ai_active: bool, surebets_today: int,
+                   req_used: int = 0):
     """Envia status do sistema a cada 2 horas."""
     from datetime import datetime
     now = datetime.utcnow().strftime('%d/%m %H:%M')
-    
-    status_ensemble = "✅" if ensemble_ready else "❌"
+
     status_ai = "✅" if ai_active else "❌"
-    
+
     msg = (
-        f"💓 *EdgeHunter — Heartbeat*\n"
+        f"🔒 *EdgeHunter — Heartbeat*\n"
         f"🕐 {now} UTC\n\n"
-        f"{status_ensemble} Ensemble ativo\n"
         f"{status_ai} IA híbrida (Gemini + Groq)\n"
         f"⚙️ Scheduler: {len(scheduler_jobs)} jobs rodando\n"
-        f"🎯 Value bets hoje: {bets_today}\n\n"
+        f"🔍 Fonte: OddsPortal Scraper\n"
+        f"🏦 Casas: Pinnacle | Betfair | Bet365 | Betano\n"
+        f"🎯 Surebets hoje: *{surebets_today}*\n\n"
         f"_Sistema operacional_ 🟢"
     )
     send_message(msg)

@@ -83,13 +83,14 @@ class TelegramBot:
         
         return False
     
-    def send_value_alert(self, opportunity: Dict, game_info: Dict) -> bool:
+    def send_value_alert(self, opportunity: Dict, game_info: Dict, ai_result: Optional[Dict] = None) -> bool:
         """
         Envia alerta de value bet formatado.
-        
+
         Args:
             opportunity: Dict retornado pelo ValueDetector
             game_info: Informações do jogo (data, liga, etc.)
+            ai_result: Resultado do ClaudeEngine (decision, confidence, reasoning)
         """
         league = game_info.get('league', 'Desconhecida')
         match_date = game_info.get('match_date', '')
@@ -110,6 +111,18 @@ class TelegramBot:
         # Verificar se tem edge vs Pinnacle
         pinnacle_badge = '✅ Confirmado vs Pinnacle' if opportunity.get('has_edge_vs_pinnacle') else '⚠️ Sem referência Pinnacle'
         
+        # Bloco Claude Engine (se disponível)
+        if ai_result and ai_result.get('decision') == 'GO':
+            ai_confidence = ai_result.get('confidence', 0)
+            ai_reasoning = ai_result.get('reasoning', '')
+            ai_block = (
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🤖 <b>IA Claude:</b> ✅ GO ({ai_confidence}%)\n"
+                f"💬 <i>{ai_reasoning[:120]}</i>\n"
+            )
+        else:
+            ai_block = ""
+
         message = f"""
 {urgency} <b>VALUE BET DETECTADO</b> {urgency}
 
@@ -130,7 +143,7 @@ class TelegramBot:
 🧠 <b>Confiança:</b> {format_confidence_bar(confidence)} {confidence:.0f}/100
 {pinnacle_badge}
 🎲 <b>Kelly (25%):</b> <code>{opportunity['kelly_fraction']*100:.2f}%</code> do bankroll
-━━━━━━━━━━━━━━━━━━━━━
+{ai_block}━━━━━━━━━━━━━━━━━━━━━
 <i>📝 Paper Trading — Não arrisque dinheiro real ainda</i>
 <i>🤖 EdgeHunter v1.0 | {datetime.utcnow().strftime('%H:%M UTC')}</i>
 """

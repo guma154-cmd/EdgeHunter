@@ -23,6 +23,18 @@ if __name__ == '__main__':
     start_scheduler(app)
     print("[OK] Scheduler iniciado")
 
+    # Claude Engine startup
+    try:
+        from app.engine.claude_engine import init_claude_engine
+        claude_key = app.config.get('CLAUDE_API_KEY', '')
+        if claude_key:
+            init_claude_engine(claude_key)
+            print("[OK] Claude Engine ativo")
+        else:
+            print("[WARN] CLAUDE_API_KEY não definida — Claude Engine desativado")
+    except Exception as e:
+        print(f"[WARN] Claude Engine startup falhou: {e}")
+
     # Telegram startup
     try:
         from app.alerts.telegram_bot import TelegramBot

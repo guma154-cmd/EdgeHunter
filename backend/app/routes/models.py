@@ -68,6 +68,16 @@ def drift_status():
     return jsonify(detector.get_summary())
 
 
+@models_bp.route('/ai-stats', methods=['GET'])
+def ai_stats():
+    """Estatísticas do motor Claude Engine."""
+    from app.engine.claude_engine import get_claude_engine
+    engine = get_claude_engine()
+    if not engine:
+        return jsonify({'active': False, 'message': 'Claude Engine não inicializado'})
+    return jsonify({'active': True, **engine.get_stats()})
+
+
 @models_bp.route('/train', methods=['POST'])
 def trigger_train():
     """Dispara retraining manual."""

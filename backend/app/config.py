@@ -28,6 +28,9 @@ class Config:
     # Telegram
     TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
     TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
+
+    # Claude AI Engine
+    CLAUDE_API_KEY = os.environ.get('CLAUDE_API_KEY', '')
     
     # Engine Parameters
     MIN_EDGE_PCT = float(os.environ.get('MIN_EDGE_PCT', 3.0))

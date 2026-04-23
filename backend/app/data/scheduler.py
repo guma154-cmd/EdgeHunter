@@ -184,6 +184,35 @@ def _fetch_odds_task(app):
                         ).first()
                         
                         if not existing_bet:
+                            # ── Filtro Claude Engine ──────────────────────────
+                            from app.engine.claude_engine import get_claude_engine
+                            _claude = get_claude_engine()
+                            if _claude:
+                                ai_result = _claude.analyze(
+                                    home_team=game_data['home_team'],
+                                    away_team=game_data['away_team'],
+                                    league=game_data.get('league', 'Desconhecida'),
+                                    selection=opp['selection'],
+                                    odds=opp['odd'],
+                                    bookmaker=opp['bookmaker'],
+                                    our_prob=opp['our_prob'],
+                                    implied_prob=opp['implied_prob'],
+                                    edge_pct=opp['edge_pct'],
+                                    pinnacle_prob=opp.get('pinnacle_fair_prob'),
+                                    model_weights=prediction.get('weights', {}),
+                                    match_date=str(game_data.get('match_date', '')),
+                                )
+                                if ai_result.get('decision') == 'NO-GO':
+                                    logger.info(
+                                        "Claude NO-GO: %s vs %s | %s",
+                                        game_data['home_team'], game_data['away_team'],
+                                        ai_result.get('reasoning', '')
+                                    )
+                                    continue
+                            else:
+                                ai_result = None
+                            # ─────────────────────────────────────────────────
+
                             bet = Bet(
                                 game_id=game.id,
                                 market='1X2',
@@ -226,7 +255,7 @@ def _fetch_odds_task(app):
                             
                             # Enviar alerta Telegram
                             if not bet.alert_sent:
-                                telegram.send_value_alert(opp, game_data)
+                                telegram.send_value_alert(opp, game_data, ai_result)
                                 bet.alert_sent = True
                             
                             new_bets += 1

@@ -23,17 +23,15 @@ if __name__ == '__main__':
     start_scheduler(app)
     print("[OK] Scheduler iniciado")
 
-    # Claude Engine startup
-    try:
-        from app.engine.claude_engine import init_claude_engine
-        claude_key = app.config.get('CLAUDE_API_KEY', '')
-        if claude_key:
-            init_claude_engine(claude_key)
-            print("[OK] Claude Engine ativo")
-        else:
-            print("[WARN] CLAUDE_API_KEY não definida — Claude Engine desativado")
-    except Exception as e:
-        print(f"[WARN] Claude Engine startup falhou: {e}")
+    # Motor hibrido startup
+    from app.engine.gemini_engine import init_ai_engine
+    gemini_key = app.config.get('GEMINI_API_KEY', '')
+    groq_key   = app.config.get('GROQ_API_KEY', '')
+    if gemini_key and groq_key:
+        init_ai_engine(gemini_key, groq_key)
+        print("[OK] Motor IA hibrido ativo: Gemini 2.5 Flash + Groq Llama 3.3 70B")
+    else:
+        print("[WARN] Chaves de IA nao configuradas — rodando sem filtro de IA")
 
     # Telegram startup
     try:

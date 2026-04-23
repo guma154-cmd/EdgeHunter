@@ -111,13 +111,15 @@ class TelegramBot:
         # Verificar se tem edge vs Pinnacle
         pinnacle_badge = '✅ Confirmado vs Pinnacle' if opportunity.get('has_edge_vs_pinnacle') else '⚠️ Sem referência Pinnacle'
         
-        # Bloco Claude Engine (se disponível)
-        if ai_result and ai_result.get('decision') == 'GO':
-            ai_confidence = ai_result.get('confidence', 0)
-            ai_reasoning = ai_result.get('reasoning', '')
+        # Bloco Motor IA (se disponivel)
+        ai = ai_result or opportunity.get('ai_result')
+        if ai and ai.get('decision') == 'GO':
+            ai_confidence = ai.get('confidence', 0)
+            ai_reasoning = ai.get('reasoning', '')
+            provider = ai.get('provider', 'IA').upper()
             ai_block = (
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🤖 <b>IA Claude:</b> ✅ GO ({ai_confidence}%)\n"
+                f"🤖 <b>{provider}:</b> ✅ GO ({ai_confidence}%)\n"
                 f"💬 <i>{ai_reasoning[:120]}</i>\n"
             )
         else:

@@ -6,6 +6,7 @@ antes de registrar a aposta. Claude age como árbitro final de qualidade.
 import anthropic
 import logging
 import json
+from datetime import datetime, timedelta
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -93,14 +94,17 @@ Formato obrigatório:
             }
         """
 
+        # Mapear selection para português
         sel_map = {"home": f"Vitória {home_team}", "draw": "Empate", "away": f"Vitória {away_team}"}
         sel_label = sel_map.get(selection, selection)
 
+        # Calcular divergência vs Pinnacle
         pin_divergence = ""
         if pinnacle_prob:
             diff = our_prob - pinnacle_prob
             pin_divergence = f"\n- Nossa prob vs Pinnacle: {diff:+.1%} ({'alinhado' if abs(diff) < 0.05 else 'DIVERGENTE'})"
 
+        # Construir prompt
         user_prompt = f"""OPORTUNIDADE DE VALUE BET — Análise requerida
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -136,6 +140,8 @@ Decida: esta aposta deve ser registrada (GO) ou descartada (NO-GO)?"""
 
             raw = response.content[0].text.strip()
 
+            # Parse JSON
+            # Remove possíveis backticks
             if "```" in raw:
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
@@ -144,25 +150,26 @@ Decida: esta aposta deve ser registrada (GO) ou descartada (NO-GO)?"""
             result = json.loads(raw)
             result["raw_response"] = raw
 
+            # Atualizar contadores
             self.decisions_today += 1
             if result.get("decision") == "GO":
                 self.go_count += 1
                 logger.info(
-                    "[Claude] ✅ GO — %s vs %s | %s @ %.2f | confiança=%s%% | %s",
-                    home_team, away_team, sel_label, odds,
-                    result.get('confidence'), result.get('reasoning', '')
+                    f"[Claude] ✅ GO — {home_team} vs {away_team} | {sel_label} @ {odds:.2f} | "
+                    f"confiança={result.get('confidence')}% | {result.get('reasoning', '')}"
                 )
             else:
                 self.nogo_count += 1
                 logger.info(
-                    "[Claude] ❌ NO-GO — %s vs %s | %s | motivo=%s",
-                    home_team, away_team, sel_label, result.get('reasoning', '')
+                    f"[Claude] ❌ NO-GO — {home_team} vs {away_team} | {sel_label} | "
+                    f"motivo={result.get('reasoning', '')}"
                 )
 
             return result
 
         except json.JSONDecodeError as e:
-            logger.error("[Claude] Erro ao parsear JSON: %s | Raw: %s", e, raw[:200])
+            logger.error(f"[Claude] Erro ao parsear JSON: {e} | Raw: {raw[:200]}")
+            # Fallback conservador
             return {
                 "decision": "NO-GO",
                 "confidence": 0,
@@ -171,7 +178,7 @@ Decida: esta aposta deve ser registrada (GO) ou descartada (NO-GO)?"""
                 "raw_response": raw if 'raw' in dir() else ""
             }
         except Exception as e:
-            logger.error("[Claude] Erro na API: %s", e)
+            logger.error(f"[Claude] Erro na API: {e}")
             return {
                 "decision": "NO-GO",
                 "confidence": 0,
@@ -184,7 +191,6 @@ Decida: esta aposta deve ser registrada (GO) ou descartada (NO-GO)?"""
         """Estatísticas de decisões do motor."""
         total = self.go_count + self.nogo_count
         return {
-            "model": self.MODEL,
             "total_decisions": total,
             "go": self.go_count,
             "no_go": self.nogo_count,

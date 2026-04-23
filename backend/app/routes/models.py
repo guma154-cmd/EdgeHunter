@@ -70,12 +70,12 @@ def drift_status():
 
 @models_bp.route('/ai-stats', methods=['GET'])
 def ai_stats():
-    """Estatísticas do motor Claude Engine."""
-    from app.engine.claude_engine import get_claude_engine
-    engine = get_claude_engine()
+    """Estatisticas do motor hibrido de IA."""
+    from app.engine.gemini_engine import get_ai_engine
+    engine = get_ai_engine()
     if not engine:
-        return jsonify({'active': False, 'message': 'Claude Engine não inicializado'})
-    return jsonify({'active': True, **engine.get_stats()})
+        return jsonify({'status': 'inactive'})
+    return jsonify({'status': 'active', **engine.get_stats()})
 
 
 @models_bp.route('/train', methods=['POST'])

@@ -104,10 +104,10 @@ def _fetch_odds_task(app):
             from flask import current_app
             from app.data.odds_api import OddsAPIClient
             from app.data.rapidapi_client import RapidAPIClient
-            from app.detection.value_detector import ValueDetector
-            from app.models import Game, Bet
+            from app.models import Game, Bet, Surebet, SurebetStat
             from app import db
-            from app.alerts.telegram_bot import TelegramBot
+            from app.alerts.telegram_bot import TelegramBot, send_surebet_alert
+            from app.detection.surebet_detector import SurebetDetector
             
             api_key = current_app.config['ODDS_API_KEY']
             rapidapi_key = current_app.config.get('RAPIDAPI_KEY')
@@ -140,8 +140,8 @@ def _fetch_odds_task(app):
                 logger.warning("Ensemble não pronto. Pulando detecção.")
                 return
             
-            detector = ValueDetector(
-                min_edge_pct=current_app.config.get('MIN_EDGE_PCT', 3.0)
+            detector = SurebetDetector(
+                min_profit_pct=current_app.config.get('MIN_SUREBET_PROFIT', 1.0)
             )
             
             telegram = TelegramBot(
@@ -152,172 +152,68 @@ def _fetch_odds_task(app):
             new_bets = 0
             
             for game_data in games:
-                # Checar se já existe no banco
-                existing = Game.query.filter_by(
-                    external_id=game_data['external_id']
+                # Checar ou criar jogo no banco
+                game = Game.query.filter_by(
+                    home_team=game_data['home_team'],
+                    away_team=game_data['away_team'],
+                    league=game_data['league']
                 ).first()
                 
-                if not existing:
+                if not game:
                     game = Game(
-                        external_id=game_data['external_id'],
-                        league=game_data['league'],
                         home_team=game_data['home_team'],
                         away_team=game_data['away_team'],
-                        match_date=game_data['match_date'],
-                        pinnacle_home=game_data.get('pinnacle_home'),
-                        pinnacle_draw=game_data.get('pinnacle_draw'),
-                        pinnacle_away=game_data.get('pinnacle_away')
+                        league=game_data['league'],
+                        match_date=datetime.fromisoformat(game_data['match_date'].replace('Z', '+00:00')),
+                        status='scheduled'
                     )
                     db.session.add(game)
                     db.session.flush()
-                else:
-                    game = existing
-                    # Atualizar odds
-                    game.pinnacle_home = game_data.get('pinnacle_home') or game.pinnacle_home
-                    game.pinnacle_draw = game_data.get('pinnacle_draw') or game.pinnacle_draw
-                    game.pinnacle_away = game_data.get('pinnacle_away') or game.pinnacle_away
                 
-                # Gerar previsão
-                try:
-                    prediction = ensemble.predict(
-                        game_data['home_team'],
-                        game_data['away_team'],
-                        game_data['match_date']
-                    )
+                # Detecção de Surebet
+                opportunities = detector.detect(game_data)
+                
+                for opp in opportunities:
+                    # Verificar se já existe essa surebet para este jogo/casas/profit
+                    existing = Surebet.query.filter_by(
+                        game_id=game.id,
+                        bookmaker_A=opp['bookmaker_A'],
+                        bookmaker_B=opp['bookmaker_B'],
+                        outcome_A=opp['outcome_A']
+                    ).first()
                     
-                    calibrated = prediction['calibrated']
-                    our_probs = {
-                        'home': calibrated['home'],
-                        'draw': calibrated['draw'],
-                        'away': calibrated['away']
-                    }
-                    
-                    pinnacle_odds = {
-                        'home': game_data.get('pinnacle_home'),
-                        'draw': game_data.get('pinnacle_draw'),
-                        'away': game_data.get('pinnacle_away')
-                    }
-                    
-                    opportunities = detector.analyze(
-                        game_data['home_team'],
-                        game_data['away_team'],
-                        our_probs,
-                        {k: v for k, v in pinnacle_odds.items() if v},
-                        game_data.get('soft_odds', {})
-                    )
-                    
-                    from concurrent.futures import ThreadPoolExecutor, as_completed
-                    from app.engine.gemini_engine import get_ai_engine
-                    ai = get_ai_engine()
-
-                    def analyze_opportunity(opp):
-                        """Analisa uma oportunidade em thread separada."""
-                        try:
-                            result = ai.analyze(
-                                home_team=game_data['home_team'],
-                                away_team=game_data['away_team'],
-                                league=game_data.get('league', 'Desconhecida'),
-                                selection=opp['selection'],
-                                odds=opp['odd'],
-                                bookmaker=opp['bookmaker'],
-                                our_prob=opp['our_prob'],
-                                implied_prob=opp['implied_prob'],
-                                edge_pct=opp['edge_pct'],
-                                pinnacle_prob=opp.get('pinnacle_fair_prob'),
-                                model_weights=prediction.get('weights', {}),
-                                match_date=str(game_data.get('match_date', ''))
-                            )
-                            return opp, result
-                        except Exception as e:
-                            logger.error(f"Erro ao analisar oportunidade: {e}")
-                            return opp, {'decision': 'NO-GO',
-                                        'reasoning': f'Erro: {e}',
-                                        'confidence': 0,
-                                        'risk_flags': ['thread_error']}
-
-                    if ai and opportunities:
-                        # Máximo 5 threads paralelas para não saturar rate limit
-                        with ThreadPoolExecutor(max_workers=5) as executor:
-                            futures = {
-                                executor.submit(analyze_opportunity, opp): opp
-                                for opp in opportunities
-                            }
-                            approved = []
-                            for future in as_completed(futures):
-                                opp, ai_result = future.result()
-                                if ai_result.get('decision') == 'GO':
-                                    opp['ai_result'] = ai_result
-                                    approved.append(opp)
-                                else:
-                                    logger.info(
-                                        f"[IA] NO-GO: {game_data['home_team']} vs {game_data['away_team']} — "
-                                        f"{opp['selection']} — {ai_result.get('reasoning', '')}"
-                                    )
-                            opportunities = approved
-
-                    for opp in opportunities:
-                        # Verificar se já apostamos neste jogo/seleção/casa
-                        existing_bet = Bet.query.filter_by(
+                    if not existing:
+                        surebet = Surebet(
                             game_id=game.id,
-                            selection=opp['selection'],
-                            bookmaker=opp['bookmaker'],
-                            result='pending'
-                        ).first()
+                            bookmaker_A=opp['bookmaker_A'],
+                            outcome_A=opp['outcome_A'],
+                            odds_A=opp['odds_A'],
+                            stake_A=opp['stake_A'],
+                            bookmaker_B=opp['bookmaker_B'],
+                            outcome_B=opp['outcome_B'],
+                            odds_B=opp['odds_B'],
+                            stake_B=opp['stake_B'],
+                            total_stake=opp['total_stake'],
+                            profit_pct=opp['profit_pct'],
+                            guaranteed_profit=opp['guaranteed_profit']
+                        )
+                        db.session.add(surebet)
                         
-                        if not existing_bet:
-
-                            bet = Bet(
-                                game_id=game.id,
-                                market='1X2',
-                                selection=opp['selection'],
-                                odd=opp['odd'],
-                                bookmaker=opp['bookmaker'],
-                                stake=current_app.config.get('PAPER_TRADING_STAKE', 10.0),
-                                our_prob=opp['our_prob'],
-                                implied_prob=opp['implied_prob'],
-                                edge_pct=opp['edge_pct'],
-                                is_paper=True
-                            )
-                            db.session.add(bet)
-                            
-                            # CORRECAO 8 — Persistir Prediction por sub-modelo
-                            from app.models import Prediction
-                            import json as _json
-                            _ind = prediction['individual_models']
-                            pred_record = Prediction(
-                                game_id=game.id,
-                                model_version='current',
-                                prob_home=prediction['calibrated']['home'],
-                                prob_draw=prediction['calibrated']['draw'],
-                                prob_away=prediction['calibrated']['away'],
-                                weights_json=_json.dumps(prediction['weights']),
-                                dixon_coles_home=_ind['dixon_coles']['home'],
-                                dixon_coles_draw=_ind['dixon_coles']['draw'],
-                                dixon_coles_away=_ind['dixon_coles']['away'],
-                                elo_home=_ind['elo']['home'],
-                                elo_draw=_ind['elo']['draw'],
-                                elo_away=_ind['elo']['away'],
-                                xgboost_home=_ind['xgboost']['home'],
-                                xgboost_draw=_ind['xgboost']['draw'],
-                                xgboost_away=_ind['xgboost']['away'],
-                                bayesian_home=_ind['bayesian']['home'],
-                                bayesian_draw=_ind['bayesian']['draw'],
-                                bayesian_away=_ind['bayesian']['away'],
-                            )
-                            db.session.add(pred_record)
-                            
-                            # Enviar alerta Telegram
-                            if not bet.alert_sent:
-                                telegram.send_value_alert(opp, game_data, ai_result)
-                                bet.alert_sent = True
-                            
-                            new_bets += 1
-                
-                except Exception as e:
-                    logger.error(f"Erro ao processar jogo {game_data['home_team']} vs {game_data['away_team']}: {e}")
+                        # Auto-aprendizado
+                        SurebetStat.update_stats(
+                            opp['bookmaker_A'], 
+                            opp['bookmaker_B'], 
+                            game.league, 
+                            opp['profit_pct']
+                        )
+                        
+                        # Alerta Telegram
+                        send_surebet_alert(opp)
+                        surebet.alert_sent = True
+                        new_bets += 1
             
             db.session.commit()
-            logger.info(f"Odds task: {len(games)} jogos, {new_bets} novas apostas")
+            logger.info(f"Surebet task: {len(games)} jogos analisados, {new_bets} novas arbitragens")
         
         except Exception as e:
             logger.error(f"Erro na tarefa de odds: {e}")

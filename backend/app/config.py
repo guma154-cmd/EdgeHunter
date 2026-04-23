@@ -36,6 +36,7 @@ class Config:
     
     # Engine Parameters
     MIN_EDGE_PCT = float(os.environ.get('MIN_EDGE_PCT', 3.0))
+    MIN_SUREBET_PROFIT = float(os.environ.get('MIN_SUREBET_PROFIT', 1.0))
     PAPER_TRADING_STAKE = float(os.environ.get('PAPER_TRADING_STAKE', 10.0))
     ROLLING_WINDOW_DAYS = int(os.environ.get('ROLLING_WINDOW_DAYS', 30))
     DRIFT_THRESHOLD = float(os.environ.get('DRIFT_THRESHOLD', 0.05))

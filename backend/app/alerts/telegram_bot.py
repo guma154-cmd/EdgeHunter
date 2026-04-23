@@ -252,3 +252,30 @@ def send_heartbeat(scheduler_jobs: list, ensemble_ready: bool,
         f"_Sistema operacional_ 🟢"
     )
     send_message(msg)
+
+
+def send_surebet_alert(opp: dict):
+    """Envia alerta de arbitragem (surebet) formatado."""
+    msg = (
+        f"🔒 *SUREBET — LUCRO GARANTIDO*\n\n"
+        f"🏟 `{opp['home_team']}` vs `{opp['away_team']}`\n"
+        f"🏆 {opp['league']}\n"
+        f"🗓 {opp['match_date']}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"APOSTA 1️⃣\n"
+        f"🏦 *{opp['bookmaker_A'].upper()}*\n"
+        f"📌 {opp['outcome_A'].upper()}\n"
+        f"💰 Odd: `{opp['odds_A']}`\n"
+        f"💵 Stake: `R$ {opp['stake_A']}`\n\n"
+        f"APOSTA 2️⃣\n"
+        f"🏦 *{opp['bookmaker_B'].upper()}*\n"
+        f"📌 {opp['outcome_B'].upper()}\n"
+        f"💰 Odd: `{opp['odds_B']}`\n"
+        f"💵 Stake: `R$ {opp['stake_B']}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💼 Stake total: `R$ {opp['total_stake']}`\n"
+        f"✅ Lucro garantido: `R$ {opp['guaranteed_profit']}`\n"
+        f"📈 ROI: `{opp['profit_pct']}%`\n"
+        f"🔒 *LUCRO INDEPENDENTE DO RESULTADO*"
+    )
+    send_message(msg)

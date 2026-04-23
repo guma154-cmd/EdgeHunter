@@ -103,33 +103,35 @@ def _fetch_odds_task(app):
         try:
             from flask import current_app
             from app.data.odds_api import OddsAPIClient
-            from app.data.rapidapi_client import RapidAPIClient
+            from app.data.apifootball_client import APIFootballClient
             from app.models import Game, Bet, Surebet, SurebetStat
             from app import db
             from app.alerts.telegram_bot import TelegramBot, send_surebet_alert
             from app.detection.surebet_detector import SurebetDetector
             
             api_key = current_app.config['ODDS_API_KEY']
-            rapidapi_key = current_app.config.get('RAPIDAPI_KEY')
+            apif_key = current_app.config.get('APIFOOTBALL_KEY')
             
             games = []
-            if api_key:
+            if apif_key:
                 try:
+                    logger.info("Buscando odds na API-Football Direct...")
+                    apif_client = APIFootballClient(apif_key)
+                    games = apif_client.fetch_odds()
+                except Exception as e:
+                    logger.error(f"Erro na API-Football: {e}")
+
+            if not games and api_key:
+                try:
+                    logger.info("Odds API Fallback...")
                     client = OddsAPIClient(api_key)
+                    # Usando fetch_all_value_games que retorna estrutura similar
                     games = client.fetch_all_value_games()
                 except Exception as e:
                     logger.error(f"Erro na Odds API: {e}")
             
-            if not games and rapidapi_key:
-                try:
-                    logger.info("Usando RapidAPI como fallback para odds...")
-                    client = RapidAPIClient(rapidapi_key)
-                    games = client.fetch_odds()
-                except Exception as e:
-                    logger.error(f"Erro na RapidAPI: {e}")
-                    
             if not games:
-                logger.warning("Nenhum jogo retornado. Ambas as APIs indisponíveis ou sem odds.")
+                logger.warning("Nenhum jogo retornado. Todas as APIs indisponíveis.")
                 return
             
             # Carregar ensemble global

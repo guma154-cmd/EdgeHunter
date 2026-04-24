@@ -1,17 +1,38 @@
 """
-EdgeHunter — OddsPortal/OddsAgora Scraper (Playwright)
-Coleta odds de Pinnacle, Betfair, Bet365 e Betano sem limites de API.
-Adaptado para o mercado brasileiro (OddsAgora).
+EdgeHunter — OddsPortal/OddsAgora Scraper Otimizado (Playwright)
+Meta: < 60 segundos por ciclo.
 """
 import asyncio
 import logging
 import random
-import re
+import time
+import os
 from datetime import datetime
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
+from app.alerts.telegram_bot import send_message
 
 logger = logging.getLogger(__name__)
+
+# OTIMIZAÇÃO 2 — Configuração de ligas via ENV ou Top 3
+DEFAULT_LEAGUES = {
+    'Brasileirao':      'https://www.oddsagora.com.br/football/brazil/brasileirao-betano/',
+    'Premier League':   'https://www.oddsagora.com.br/football/england/campeonato-ingles/',
+    'Champions League': 'https://www.oddsagora.com.br/football/europe/liga-dos-campeoes/',
+}
+
+def _get_active_leagues():
+    leagues_env = os.getenv('SCRAPER_LEAGUES', '').lower()
+    if not leagues_env:
+        return DEFAULT_LEAGUES
+    
+    active = {}
+    if 'brasileirao' in leagues_env: active['Brasileirao'] = DEFAULT_LEAGUES['Brasileirao']
+    if 'premier' in leagues_env:     active['Premier League'] = DEFAULT_LEAGUES['Premier League']
+    if 'champions' in leagues_env:   active['Champions League'] = DEFAULT_LEAGUES['Champions League']
+    return active or DEFAULT_LEAGUES
+
+LEAGUES_URLS = _get_active_leagues()
 
 TARGET_BOOKMAKERS = {
     'pinnacle': ['pinnacle'],
@@ -20,20 +41,28 @@ TARGET_BOOKMAKERS = {
     'betano': ['betano']
 }
 
-LEAGUES_URLS = {
-    'Premier League': 'https://www.oddsagora.com.br/football/england/campeonato-ingles/',
-    'La Liga': 'https://www.oddsagora.com.br/football/spain/laliga/',
-    'Bundesliga': 'https://www.oddsagora.com.br/football/germany/bundesliga/',
-    'Serie A': 'https://www.oddsagora.com.br/football/italy/serie-a/',
-    'Ligue 1': 'https://www.oddsagora.com.br/football/france/ligue-1/',
-    'Brasileirao': 'https://www.oddsagora.com.br/football/brazil/brasileirao-betano/',
-    'Champions League': 'https://www.oddsagora.com.br/football/europe/liga-dos-campeoes/',
-    'Libertadores': 'https://www.oddsagora.com.br/football/south-america/copa-libertadores/',
-}
-
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 ]
+
+# OTIMIZAÇÃO 3 — Cache de jogos do dia
+_games_cache = {
+    'date': None,
+    'match_urls': {}  # {league_name: [(url, text), ...]}
+}
+
+def _get_cached_match_links(league_name: str) -> list:
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    if _games_cache['date'] == today and league_name in _games_cache['match_urls']:
+        return _games_cache['match_urls'][league_name]
+    return []
+
+def _update_cache(league_name: str, links: list):
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    if _games_cache['date'] != today:
+        _games_cache['date'] = today
+        _games_cache['match_urls'] = {}
+    _games_cache['match_urls'][league_name] = links
 
 class OddsPortalScraper:
     def __init__(self):
@@ -44,70 +73,87 @@ class OddsPortalScraper:
         self.browser = await playwright.chromium.launch(headless=True)
         self.context = await self.browser.new_context(
             user_agent=random.choice(USER_AGENTS),
-            viewport={'width': 1920, 'height': 1080}
+            viewport={'width': 1280, 'height': 720}
         )
 
+    # OTIMIZAÇÃO 1 — Scraping paralelo de ligas
     async def fetch_games_with_odds(self) -> list:
-        all_games = []
         async with async_playwright() as p:
             await self._init_browser(p)
-            try:
-                for league_name, url in LEAGUES_URLS.items():
-                    logger.info(f"Scraping league: {league_name}")
-                    page = await self.context.new_page()
-                    try:
-                        await page.goto(url, wait_until="networkidle", timeout=60000)
-                        
-                        # Cookies
-                        try:
-                            btn = page.get_by_role("button", name="Aceito")
-                            if await btn.is_visible(): await btn.click()
-                        except: pass
-                        
-                        await page.wait_for_timeout(5000)
-                        
-                        # Pegar links e textos
-                        links_data = await page.eval_on_selector_all('a', '''elements => elements.map(e => ({
-                            href: e.href,
-                            text: e.innerText
-                        }))''')
-                        
-                        match_links = []
-                        for l in links_data:
-                            href = l['href']
-                            text = l['text']
-                            # Padrão: links H2H que contêm '#' e têm times no texto
-                            if "/h2h/" in href and "#" in href and "vs" in text.lower():
-                                if href not in [m[0] for m in match_links]:
-                                    match_links.append((href, text))
-                        
-                        logger.info(f"Encontrados {len(match_links)} links de partidas em {league_name}")
-                        
-                        count = 0
-                        for match_url, match_text in match_links:
-                            if count >= 3: break
-                            game_data = await self._scrape_match_odds(page, match_url, league_name, match_text)
-                            if game_data and len(game_data.get('all_odds', {})) >= 1:
-                                all_games.append(game_data)
-                                count += 1
-                                logger.info(f"Coletado: {game_data['home_team']} vs {game_data['away_team']} ({len(game_data['all_odds'])} casas)")
-                            await page.wait_for_timeout(2000)
-                            
-                    except Exception as e:
-                        logger.error(f"Erro em {league_name}: {e}")
-                    finally:
-                        await page.close()
-            finally:
+            
+            tasks = [
+                self._scrape_league(league_name, url)
+                for league_name, url in LEAGUES_URLS.items()
+            ]
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            all_games = []
+            for result in results:
+                if isinstance(result, list):
+                    all_games.extend(result)
+                elif isinstance(result, Exception):
+                    logger.error(f"Erro em task de liga: {result}")
+            
+            if self.browser:
                 await self.browser.close()
+            return all_games
+
+    async def _scrape_league(self, league_name, url) -> list:
+        league_games = []
+        page = await self.context.new_page()
+        try:
+            # OTIMIZAÇÃO 3 — Verificar cache
+            match_links = _get_cached_match_links(league_name)
+            
+            if not match_links:
+                # OTIMIZAÇÃO 4 — Timeout agressivo (15s)
+                await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                
+                # Aceitar cookies rápido
+                try:
+                    btn = page.get_by_role("button", name="Aceito")
+                    if await btn.is_visible(timeout=2000): await btn.click()
+                except: pass
+                
+                await page.wait_for_timeout(1000)
+                
+                links_data = await page.eval_on_selector_all('a', '''elements => elements.map(e => ({
+                    href: e.href,
+                    text: e.innerText
+                }))''')
+                
+                found_links = []
+                for l in links_data:
+                    href = l['href']
+                    text = l['text']
+                    if "/h2h/" in href and "#" in href and "vs" in text.lower():
+                        if href not in [m[0] for m in found_links]:
+                            found_links.append((href, text))
+                
+                match_links = found_links[:5] # Limite de 5 jogos por liga para velocidade
+                _update_cache(league_name, match_links)
+                logger.info(f"Descobertos {len(match_links)} links para {league_name}")
+            
+            # Coletar odds de cada partida (agora sempre usando os links do cache se disponíveis)
+            for match_url, match_text in match_links:
+                game_data = await self._scrape_match_odds(page, match_url, league_name, match_text)
+                if game_data and len(game_data.get('all_odds', {})) >= 1:
+                    league_games.append(game_data)
+                    
+        except Exception as e:
+            logger.error(f"Erro processando liga {league_name}: {e}")
+        finally:
+            await page.close()
         
-        return all_games
+        return league_games
 
     async def _scrape_match_odds(self, page, url, league_name, match_text) -> dict:
         try:
-            await page.goto(url, wait_until="networkidle", timeout=60000)
-            await page.wait_for_timeout(5000)
+            # OTIMIZAÇÃO 4 — Timeout agressivo
+            await page.goto(url, wait_until="domcontentloaded", timeout=12000)
+            await page.wait_for_timeout(1000) # OTIMIZAÇÃO 4 — Redução de wait (era 5s)
             
-            # Times do texto (ex: Sunderland vs Nottingham - 24/04/2026)
             clean_text = match_text.split('-')[0].strip()
             if " vs " in clean_text.lower():
                 home_team, away_team = [t.strip() for t in clean_text.split(" vs ")]
@@ -118,6 +164,7 @@ class OddsPortalScraper:
             soup = BeautifulSoup(content, 'lxml')
             
             all_odds = {}
+            # Busca direta nas tabelas de odds
             rows = soup.find_all(['div', 'tr'], recursive=True)
             for row in rows:
                 row_text = row.get_text().lower()
@@ -145,8 +192,23 @@ class OddsPortalScraper:
                 'league': league_name, 'match_date': datetime.now().strftime('%Y-%m-%d %H:%M'),
                 'all_odds': all_odds, 'source': 'oddsportal'
             }
-        except Exception as e: return None
+        except Exception as e: 
+            return None
 
+# OTIMIZAÇÃO 5 — Alerta de velocidade e medição
 def fetch_games_sync() -> list:
-    try: return asyncio.run(OddsPortalScraper().fetch_games_with_odds())
-    except Exception as e: return []
+    start_time = time.time()
+    try:
+        scraper = OddsPortalScraper()
+        games = asyncio.run(scraper.fetch_games_with_odds())
+        elapsed = time.time() - start_time
+        
+        logger.info(f"[OddsPortal] Coleta concluída em {elapsed:.1f}s | Jogos: {len(games)}")
+        
+        if elapsed > 90:
+            send_message(f"⚠️ *Scraper Lento*: {elapsed:.1f}s detectados. Meta < 60s.")
+            
+        return games
+    except Exception as e:
+        logger.error(f"Erro crítico no fetch_games_sync: {e}")
+        return []

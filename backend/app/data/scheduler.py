@@ -168,6 +168,7 @@ def _fetch_odds_task(app):
             
             detector = SurebetDetector(
                 min_profit_pct=current_app.config.get('MIN_SUREBET_PROFIT', 1.0),
+                max_profit_pct=current_app.config.get('MAX_SUREBET_ROI', 8.0),
                 stake_pct=current_app.config.get('STAKE_PCT', 0.10),
                 bankroll_per_book=current_app.config.get('BANKROLL_PER_BOOK', 20.0)
             )
@@ -179,69 +180,115 @@ def _fetch_odds_task(app):
             
             new_bets = 0
             
+            # PRIMEIRA COLETA
+            opportunities_1 = []
             for game_data in games:
+                opps = detector.detect(game_data)
+                for o in opps:
+                    opportunities_1.append(o)
+
+            if opportunities_1:
+                # Aguardar 30s e confirmar
+                import time
+                logger.info(f"Detectadas {len(opportunities_1)} surebets. Aguardando 30s para confirmação...")
+                time.sleep(30)
+                
+                # SEGUNDA COLETA
+                games_2 = fetch_games_sync()
+                opportunities_2 = []
+                for g2 in games_2:
+                    opps2 = detector.detect(g2)
+                    for o2 in opps2:
+                        opportunities_2.append(o2)
+                
+                # Só alertar se persistiu nas 2 coletas com odds similares
+                confirmed = []
+                for opp in opportunities_1:
+                    match = next((
+                        o for o in opportunities_2 
+                        if o['home_team'] == opp['home_team'] and 
+                           o['bookmaker_A'] == opp['bookmaker_A'] and
+                           abs(o['odds_A'] - opp['odds_A']) < 0.05
+                    ), None)
+                    
+                    if match:
+                        confirmed.append(opp)
+                
+                logger.info(
+                    f"{len(opportunities_1)} detectados → "
+                    f"{len(confirmed)} confirmados após dupla verificação"
+                )
+                
+                final_opportunities = confirmed
+            else:
+                final_opportunities = []
+
+            for opp in final_opportunities:
                 # Checar ou criar jogo no banco
                 game = Game.query.filter_by(
-                    home_team=game_data['home_team'],
-                    away_team=game_data['away_team'],
-                    league=game_data['league']
+                    home_team=opp['home_team'],
+                    away_team=opp['away_team'],
+                    league=opp['league']
                 ).first()
                 
                 if not game:
+                    try:
+                        dt_str = opp['match_date'].replace(' ', 'T')
+                        match_dt = datetime.fromisoformat(dt_str)
+                    except:
+                        match_dt = datetime.utcnow()
+
                     game = Game(
-                        home_team=game_data['home_team'],
-                        away_team=game_data['away_team'],
-                        league=game_data['league'],
-                        match_date=datetime.fromisoformat(game_data['match_date'].replace('Z', '+00:00')),
+                        home_team=opp['home_team'],
+                        away_team=opp['away_team'],
+                        league=opp['league'],
+                        match_date=match_dt,
                         status='scheduled'
                     )
                     db.session.add(game)
                     db.session.flush()
                 
-                # Detecção de Surebet
-                opportunities = detector.detect(game_data)
+                # Verificar se já existe essa surebet para este jogo/casas/outcome
+                existing = Surebet.query.filter_by(
+                    game_id=game.id,
+                    bookmaker_A=opp['bookmaker_A'],
+                    bookmaker_B=opp['bookmaker_B'],
+                    outcome_A=opp['outcome_A']
+                ).first()
                 
-                for opp in opportunities:
-                    # Verificar se já existe essa surebet para este jogo/casas/profit
-                    existing = Surebet.query.filter_by(
+                if not existing:
+                    surebet = Surebet(
                         game_id=game.id,
                         bookmaker_A=opp['bookmaker_A'],
+                        outcome_A=opp['outcome_A'],
+                        odds_A=opp['odds_A'],
+                        stake_A=opp['stake_A'],
                         bookmaker_B=opp['bookmaker_B'],
-                        outcome_A=opp['outcome_A']
-                    ).first()
+                        outcome_B=opp['outcome_B'],
+                        odds_B=opp['odds_B'],
+                        stake_B=opp['stake_B'],
+                        total_stake=opp['total_stake'],
+                        profit_pct=opp['profit_pct'],
+                        guaranteed_profit=opp['guaranteed_profit']
+                    )
+                    db.session.add(surebet)
                     
-                    if not existing:
-                        surebet = Surebet(
-                            game_id=game.id,
-                            bookmaker_A=opp['bookmaker_A'],
-                            outcome_A=opp['outcome_A'],
-                            odds_A=opp['odds_A'],
-                            stake_A=opp['stake_A'],
-                            bookmaker_B=opp['bookmaker_B'],
-                            outcome_B=opp['outcome_B'],
-                            odds_B=opp['odds_B'],
-                            stake_B=opp['stake_B'],
-                            total_stake=opp['total_stake'],
-                            profit_pct=opp['profit_pct'],
-                            guaranteed_profit=opp['guaranteed_profit']
-                        )
-                        db.session.add(surebet)
-                        
-                        # Auto-aprendizado
-                        SurebetStat.update_stats(
-                            opp['bookmaker_A'], 
-                            opp['bookmaker_B'], 
-                            game.league, 
-                            opp['profit_pct']
-                        )
-                        
-                        # Alerta Telegram
-                        send_surebet_alert(opp)
-                        surebet.alert_sent = True
-                        new_bets += 1
+                    # Auto-aprendizado
+                    from app.models.surebet import SurebetStat
+                    SurebetStat.update_stats(
+                        opp['bookmaker_A'], 
+                        opp['bookmaker_B'], 
+                        game.league, 
+                        opp['profit_pct']
+                    )
+                    
+                    # Alerta Telegram
+                    send_surebet_alert(opp)
+                    surebet.alert_sent = True
+                    new_bets += 1
             
             db.session.commit()
-            logger.info(f"Surebet task: {len(games)} jogos analisados, {new_bets} novas arbitragens")
+            logger.info(f"Surebet task: {len(games)} jogos analisados, {new_bets} novas arbitragens confirmadas")
         
         except Exception as e:
             logger.error(f"Erro na tarefa de odds: {e}")

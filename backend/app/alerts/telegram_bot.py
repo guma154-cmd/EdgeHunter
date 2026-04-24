@@ -41,6 +41,13 @@ def format_confidence_bar(confidence: float) -> str:
     filled = int(confidence / 10)
     return '█' * filled + '░' * (10 - filled)
 
+# CORREÇÃO 3 — Deep links para as casas
+DEEPLINKS = {
+    'bet365':  'https://www.bet365.com/#/AS/B1/',
+    'betano':  'https://www.betano.com/sport/futebol/',
+    'betfair': 'https://www.betfair.com/exchange/plus/football',
+    'pinnacle': 'https://www.pinnacle.com/pt/football/matchups'
+}
 
 class TelegramBot:
     """
@@ -68,7 +75,8 @@ class TelegramBot:
                     'chat_id': self.chat_id,
                     'text': text,
                     'parse_mode': parse_mode,
-                    'disable_notification': disable_notification
+                    'disable_notification': disable_notification,
+                    'disable_web_page_preview': True
                 },
                 timeout=10
             )
@@ -84,14 +92,7 @@ class TelegramBot:
         return False
     
     def send_value_alert(self, opportunity: Dict, game_info: Dict, ai_result: Optional[Dict] = None) -> bool:
-        """
-        Envia alerta de value bet formatado.
-
-        Args:
-            opportunity: Dict retornado pelo ValueDetector
-            game_info: Informações do jogo (data, liga, etc.)
-            ai_result: Resultado do ClaudeEngine (decision, confidence, reasoning)
-        """
+        """Envia alerta de value bet formatado."""
         league = game_info.get('league', 'Desconhecida')
         match_date = game_info.get('match_date', '')
         
@@ -172,10 +173,6 @@ class TelegramBot:
 📊 <b>Sharpe 30d:</b> <code>{stats.get('sharpe', 0):.2f}</code>
 🎯 <b>CLV Médio:</b> <code>{stats.get('clv_avg', 0):+.2f}%</code>
 ━━━━━━━━━━━━━━━━━━━━━
-🧠 <b>Modelo Ativo:</b> {stats.get('model_version', 'v1.0')}
-📉 <b>Brier Score:</b> <code>{stats.get('brier_score', 0):.4f}</code>
-🔍 <b>Drift Status:</b> {stats.get('drift_status', 'Normal')}
-━━━━━━━━━━━━━━━━━━━━━
 <i>🤖 EdgeHunter | Paper Trading</i>
 """
         return self._send(message.strip())
@@ -221,7 +218,7 @@ o modelo <b>{new_version}</b> superou o campeão anterior.
         return self._send("🤖 EdgeHunter conectado com sucesso! Sistema de value betting ativo.")
 
 
-def send_message(text: str, parse_mode: str = 'Markdown'):
+def send_message(text: str, parse_mode: str = 'HTML'):
     """Função auxiliar para enviar mensagens rápidas via Telegram."""
     from flask import current_app
     token = current_app.config.get('TELEGRAM_BOT_TOKEN')
@@ -242,14 +239,14 @@ def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,
     status_ai = "✅" if ai_active else "❌"
 
     msg = (
-        f"🔒 *EdgeHunter — Heartbeat*\n"
+        f"🔒 <b>EdgeHunter — Heartbeat</b>\n"
         f"🕐 {now} UTC\n\n"
         f"{status_ai} IA híbrida (Gemini + Groq)\n"
         f"⚙️ Scheduler: {len(scheduler_jobs)} jobs rodando\n"
         f"🔍 Fonte: OddsPortal Scraper\n"
         f"🏦 Casas: Pinnacle | Betfair | Bet365 | Betano\n"
-        f"🎯 Surebets hoje: *{surebets_today}*\n\n"
-        f"_Sistema operacional_ 🟢"
+        f"🎯 Surebets hoje: <b>{surebets_today}</b>\n\n"
+        f"<i>Sistema operacional</i> 🟢"
     )
     send_message(msg)
 
@@ -260,28 +257,34 @@ def send_surebet_alert(opp: dict):
     detected_at = datetime.utcnow()
     expires_at = detected_at + timedelta(seconds=90)
 
+    # CORREÇÃO 3 — Obter deep links
+    link_A = DEEPLINKS.get(opp['bookmaker_A'].lower(), '#')
+    link_B = DEEPLINKS.get(opp['bookmaker_B'].lower(), '#')
+
     msg = (
-        f"🔒 *SUREBET — LUCRO GARANTIDO*\n"
-        f"⏰ *EXECUTE EM ATÉ 90 SEGUNDOS*\n"
+        f"🔒 <b>SUREBET — LUCRO GARANTIDO</b>\n"
+        f"⏰ <b>EXECUTE EM ATÉ 90 SEGUNDOS</b>\n"
         f"🕐 Detectado: {detected_at.strftime('%H:%M:%S')} UTC\n"
         f"⚠️ Expira: {expires_at.strftime('%H:%M:%S')} UTC\n\n"
-        f"🏟 `{opp['home_team']}` vs `{opp['away_team']}`\n"
+        f"🏟 <code>{opp['home_team']}</code> vs <code>{opp['away_team']}</code>\n"
         f"🏆 {opp['league']}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"APOSTA 1️⃣\n"
-        f"🏦 *{opp['bookmaker_A'].upper()}*\n"
+        f"🏦 <b>{opp['bookmaker_A'].upper()}</b>\n"
         f"📌 {opp['outcome_A'].upper()}\n"
-        f"💰 Odd: `{opp['odds_A_raw'] if 'odds_A_raw' in opp else opp['odds_A']}`\n"
-        f"💵 Stake: `R$ {opp['stake_A']}`\n\n"
+        f"💰 Odd: <code>{opp['odds_A_raw'] if 'odds_A_raw' in opp else opp['odds_A']}</code>\n"
+        f"💵 Stake: <b>R$ {opp['stake_A']}</b>\n"
+        f"🔗 <a href='{link_A}'>Abrir {opp['bookmaker_A'].upper()}</a>\n\n"
         f"APOSTA 2️⃣\n"
-        f"🏦 *{opp['bookmaker_B'].upper()}*\n"
+        f"🏦 <b>{opp['bookmaker_B'].upper()}</b>\n"
         f"📌 {opp['outcome_B'].upper()}\n"
-        f"💰 Odd: `{opp['odds_B_raw'] if 'odds_B_raw' in opp else opp['odds_B']}`\n"
-        f"💵 Stake: `R$ {opp['stake_B']}`\n\n"
+        f"💰 Odd: <code>{opp['odds_B_raw'] if 'odds_B_raw' in opp else opp['odds_B']}</code>\n"
+        f"💵 Stake: <b>R$ {opp['stake_B']}</b>\n"
+        f"🔗 <a href='{link_B}'>Abrir {opp['bookmaker_B'].upper()}</a>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💼 Stake total: `R$ {opp['total_stake']}`\n"
-        f"✅ Lucro líquido: `R$ {opp['guaranteed_profit']}`\n"
-        f"📈 ROI Real: `{opp['profit_pct']}%`\n"
-        f"🔒 *LUCRO INDEPENDENTE DO RESULTADO*"
+        f"💼 Stake total: <code>R$ {opp['total_stake']}</code>\n"
+        f"✅ Lucro líquido: <b>R$ {opp['guaranteed_profit']}</b>\n"
+        f"📈 ROI Real: <code>{opp['profit_pct']}%</code>\n"
+        f"🔒 <b>LUCRO INDEPENDENTE DO RESULTADO</b>"
     )
     send_message(msg)

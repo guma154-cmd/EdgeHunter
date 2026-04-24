@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
+from playwright_stealth import stealth_async
 from app.alerts.telegram_bot import send_message
 
 logger = logging.getLogger(__name__)
@@ -41,9 +42,31 @@ TARGET_BOOKMAKERS = {
     'betano': ['betano']
 }
 
+# CORREÇÃO 4 — Rotação de User-Agent real (10 agentes)
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0"
 ]
+
+# CORREÇÃO 4 — Headers realistas
+REALISTIC_HEADERS = {
+    'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Referer': 'https://www.google.com.br/',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'cross-site',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1'
+}
 
 # OTIMIZAÇÃO 3 — Cache de jogos do dia
 _games_cache = {
@@ -71,9 +94,11 @@ class OddsPortalScraper:
 
     async def _init_browser(self, playwright):
         self.browser = await playwright.chromium.launch(headless=True)
+        # CORREÇÃO 4 — Rotação de User-Agent
         self.context = await self.browser.new_context(
             user_agent=random.choice(USER_AGENTS),
-            viewport={'width': 1280, 'height': 720}
+            viewport={'width': 1280, 'height': 720},
+            extra_http_headers=REALISTIC_HEADERS
         )
 
     # OTIMIZAÇÃO 1 — Scraping paralelo de ligas
@@ -102,7 +127,13 @@ class OddsPortalScraper:
     async def _scrape_league(self, league_name, url) -> list:
         league_games = []
         page = await self.context.new_page()
+        # CORREÇÃO 1 — Playwright Stealth
+        await stealth_async(page)
+        
         try:
+            # CORREÇÃO 4 — Sleep randômico
+            await asyncio.sleep(random.uniform(1.5, 3.5))
+            
             # OTIMIZAÇÃO 3 — Verificar cache
             match_links = _get_cached_match_links(league_name)
             
@@ -150,9 +181,12 @@ class OddsPortalScraper:
 
     async def _scrape_match_odds(self, page, url, league_name, match_text) -> dict:
         try:
+            # CORREÇÃO 4 — Sleep randômico
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+            
             # OTIMIZAÇÃO 4 — Timeout agressivo
             await page.goto(url, wait_until="domcontentloaded", timeout=12000)
-            await page.wait_for_timeout(1000) # OTIMIZAÇÃO 4 — Redução de wait (era 5s)
+            await page.wait_for_timeout(1000) 
             
             clean_text = match_text.split('-')[0].strip()
             if " vs " in clean_text.lower():

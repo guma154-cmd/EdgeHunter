@@ -233,8 +233,7 @@ def send_message(text: str, parse_mode: str = 'Markdown'):
     return bot._send(text, parse_mode=parse_mode)
 
 
-def send_heartbeat(scheduler_jobs: list, ensemble_ready: bool,
-                   ai_active: bool, surebets_today: int,
+def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,
                    req_used: int = 0):
     """Envia status do sistema a cada 2 horas."""
     from datetime import datetime

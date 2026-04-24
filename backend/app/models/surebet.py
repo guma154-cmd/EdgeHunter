@@ -24,12 +24,16 @@ class SurebetStat(db.Model):
         stat = cls.query.filter_by(bookmaker_pair=pair, league=league).first()
         
         if not stat:
-            stat = cls(bookmaker_pair=pair, league=league)
+            stat = cls(bookmaker_pair=pair, league=league, avg_profit_pct=0.0, total_opportunities=0)
             db.session.add(stat)
         
+        # Garantir que não sejam None
+        curr_avg = stat.avg_profit_pct or 0.0
+        curr_total = stat.total_opportunities or 0
+        
         # Média móvel simples para lucro
-        stat.avg_profit_pct = (stat.avg_profit_pct * stat.total_opportunities + profit_pct) / (stat.total_opportunities + 1)
-        stat.total_opportunities += 1
+        stat.avg_profit_pct = (curr_avg * curr_total + profit_pct) / (curr_total + 1)
+        stat.total_opportunities = curr_total + 1
         stat.last_detected_at = datetime.utcnow()
         db.session.commit()
 

@@ -7,6 +7,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 import logging
 import pytz
+from datetime import datetime, date
 
 logger = logging.getLogger(__name__)
 
@@ -157,13 +158,13 @@ def _fetch_odds_task(app):
                 logger.warning("Nenhum jogo retornado. Todas as APIs indisponíveis.")
                 return
             
-            # Carregar ensemble global
+            # Carregar ensemble global (opcional para Surebets)
             from app.engine.ensemble import _get_global_ensemble
             ensemble = _get_global_ensemble()
+            ensemble_ready = ensemble is not None and ensemble.is_ready
             
-            if not ensemble or not ensemble.is_ready:
-                logger.warning("Ensemble não pronto. Pulando detecção.")
-                return
+            if not ensemble_ready:
+                logger.info("Ensemble não pronto. Prosseguindo apenas com Surebets.")
             
             detector = SurebetDetector(
                 min_profit_pct=current_app.config.get('MIN_SUREBET_PROFIT', 1.0)
@@ -564,7 +565,6 @@ def _heartbeat_task(app):
             ensemble = _get_global_ensemble()
             ai = get_ai_engine()
 
-            today = date.today()
             surebets_today = Bet.query.filter(
                 Bet.mode == 'paper',
                 Bet.timestamp >= datetime.combine(date.today(), datetime.min.time())
@@ -575,7 +575,6 @@ def _heartbeat_task(app):
 
             send_heartbeat(
                 scheduler_jobs=jobs,
-                ensemble_ready=ensemble is not None and ensemble.is_ready,
                 ai_active=ai is not None,
                 surebets_today=surebets_today
             )

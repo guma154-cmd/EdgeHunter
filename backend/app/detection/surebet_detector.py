@@ -4,8 +4,12 @@ class SurebetDetector:
     Fórmula: (1/odd_A) + (1/odd_B) < 1 = lucro garantido
     """
 
-    def __init__(self, min_profit_pct: float = 1.0):
+    def __init__(self, min_profit_pct: float = 1.0, 
+                 stake_pct: float = 0.10, 
+                 bankroll_per_book: float = 20.0):
         self.min_profit_pct = min_profit_pct  # lucro mínimo 1%
+        self.stake_pct = stake_pct            # 10% por casa em testes
+        self.bankroll_per_book = bankroll_per_book # R$20 por casa
 
     def detect(self, game_data: dict) -> list:
         """
@@ -33,8 +37,7 @@ class SurebetDetector:
         }
         """
         opportunities = []
-        bankroll = 80.0  # R$20 × 4 casas
-
+        
         soft_books = game_data.get('all_odds', {})
         # all_odds = {'bet365': {'home': 2.10, 'draw': 3.40, 'away': 3.20},
         #             'betano': {'home': 2.05, 'draw': 3.50, 'away': 3.30}, ...}
@@ -69,7 +72,11 @@ class SurebetDetector:
                             continue
 
                         # Calcular stakes proporcionais
-                        total_stake = min(bankroll * 0.5, 40.0)  # max 50% da banca
+                        # max_stake_per_side = BANKROLL_PER_BOOK * STAKE_PCT
+                        # total_stake = max_stake_per_side * 2
+                        max_stake_per_side = self.bankroll_per_book * self.stake_pct
+                        total_stake = max_stake_per_side * 2
+                        
                         stake_A = total_stake / (odd_A * arb)
                         stake_B = total_stake / (odd_B * arb)
                         guaranteed_return = stake_A * odd_A

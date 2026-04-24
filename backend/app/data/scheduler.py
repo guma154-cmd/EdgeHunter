@@ -167,7 +167,9 @@ def _fetch_odds_task(app):
                 logger.info("Ensemble não pronto. Prosseguindo apenas com Surebets.")
             
             detector = SurebetDetector(
-                min_profit_pct=current_app.config.get('MIN_SUREBET_PROFIT', 1.0)
+                min_profit_pct=current_app.config.get('MIN_SUREBET_PROFIT', 1.0),
+                stake_pct=current_app.config.get('STAKE_PCT', 0.10),
+                bankroll_per_book=current_app.config.get('BANKROLL_PER_BOOK', 20.0)
             )
             
             telegram = TelegramBot(

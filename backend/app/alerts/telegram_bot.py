@@ -234,9 +234,13 @@ def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,
                    req_used: int = 0):
     """Envia status do sistema a cada 2 horas."""
     from datetime import datetime
+    from app.engine.bankroll_manager import BankrollManager
+    
     now = datetime.utcnow().strftime('%d/%m %H:%M')
-
     status_ai = "✅" if ai_active else "❌"
+    
+    bm = BankrollManager()
+    bank_status = bm.get_status()
 
     msg = (
         f"🔒 <b>EdgeHunter — Heartbeat</b>\n"
@@ -246,6 +250,7 @@ def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,
         f"🔍 Fonte: OddsPortal Scraper\n"
         f"🏦 Casas: Pinnacle | Betfair | Bet365 | Betano\n"
         f"🎯 Surebets hoje: <b>{surebets_today}</b>\n\n"
+        f"💰 <b>Banca por casa:</b>\n{bank_status}\n\n"
         f"<i>Sistema operacional</i> 🟢"
     )
     send_message(msg)

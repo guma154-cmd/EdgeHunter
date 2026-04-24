@@ -224,7 +224,8 @@ class OddsPortalScraper:
             return {
                 'home_team': home_team, 'away_team': away_team,
                 'league': league_name, 'match_date': datetime.now().strftime('%Y-%m-%d %H:%M'),
-                'all_odds': all_odds, 'source': 'oddsportal'
+                'all_odds': all_odds, 'source': 'oddsportal',
+                'source_url': url
             }
         except Exception as e: 
             return None

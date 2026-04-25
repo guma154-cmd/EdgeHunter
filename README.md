@@ -252,3 +252,4 @@ EdgeHunter/
 ├── venv/                 # Python virtualenv
 └── start.bat             # Iniciar tudo com um clique
 ```
+# poll test Sat, Apr 25, 2026  8:14:17 PM

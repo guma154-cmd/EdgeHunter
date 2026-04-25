@@ -269,7 +269,7 @@ def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,
         f"💰 <b>Banca por casa:</b>\n{bank_status}\n\n"
         f"<i>Sistema operacional</i> 🟢"
     )
-    send_message(msg)
+    return send_message(msg)
 
 
 def send_surebet_alert(opp: dict):

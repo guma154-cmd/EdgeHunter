@@ -12,19 +12,65 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 try:
-    from playwright_stealth import stealth_async as _playwright_stealth
+    from playwright_stealth import stealth_async as _playwright_stealth_async
 except ImportError:
-    from playwright_stealth import stealth as _playwright_stealth
+    _playwright_stealth_async = None
 from app.alerts.telegram_bot import send_message
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_stealth_impl():
+    """Resolve a API correta do playwright_stealth sem assumir a assinatura."""
+    if callable(_playwright_stealth_async):
+        return _playwright_stealth_async
+
+    try:
+        import playwright_stealth as stealth_pkg
+    except ImportError:
+        return None
+
+    candidates = [
+        getattr(stealth_pkg, 'stealth_async', None),
+        getattr(stealth_pkg, 'stealth', None),
+    ]
+
+    stealth_module = getattr(stealth_pkg, 'stealth', None)
+    if stealth_module is not None:
+        candidates.extend([
+            getattr(stealth_module, 'stealth_async', None),
+            getattr(stealth_module, 'stealth', None),
+        ])
+
+    for candidate in candidates:
+        if callable(candidate):
+            return candidate
+
+    stealth_class = getattr(stealth_pkg, 'Stealth', None)
+    if callable(stealth_class):
+        try:
+            stealth_instance = stealth_class()
+        except TypeError:
+            return None
+
+        for attr_name in ('apply_stealth_async', 'stealth_async'):
+            candidate = getattr(stealth_instance, attr_name, None)
+            if callable(candidate):
+                return candidate
+
+    return None
 
 
 async def _apply_stealth(page) -> None:
     """
     Compatibilidade com versões antigas e novas de playwright_stealth.
     """
-    result = _playwright_stealth(page)
+    stealth_impl = _resolve_stealth_impl()
+    if stealth_impl is None:
+        logger.warning("playwright_stealth sem API compatível; seguindo sem stealth")
+        return
+
+    result = stealth_impl(page)
     if inspect.isawaitable(result):
         await result
 

@@ -3,6 +3,7 @@ EdgeHunter — Telegram Bot para Alertas de Value Bets
 Envia alertas formatados com todos os detalhes da oportunidade detectada.
 """
 import logging
+import time
 from typing import Dict, List, Optional
 from datetime import datetime
 
@@ -78,7 +79,7 @@ class TelegramBot:
                     'disable_notification': disable_notification,
                     'disable_web_page_preview': True
                 },
-                timeout=10
+                timeout=30
             )
             
             if response.status_code == 200:
@@ -228,6 +229,21 @@ def send_message(text: str, parse_mode: str = 'HTML'):
     
     bot = TelegramBot(token, chat_id)
     return bot._send(text, parse_mode=parse_mode)
+
+
+def send_startup_message() -> bool:
+    """Tenta enviar mensagem de startup com 3 tentativas."""
+    for attempt in range(3):
+        try:
+            if send_message("🚀 EdgeHunter iniciado no servidor Ubuntu 24/7"):
+                return True
+            raise RuntimeError("send_message retornou False")
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(10)
+            else:
+                logger.error(f"Startup Telegram falhou após 3 tentativas: {e}")
+    return False
 
 
 def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,

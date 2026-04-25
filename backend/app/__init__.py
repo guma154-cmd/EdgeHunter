@@ -1,6 +1,7 @@
 """
 EdgeHunter — Flask Application Factory
 """
+import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -10,11 +11,16 @@ db = SQLAlchemy()
 migrate = Migrate()
 
 
-def create_app(config_name='default'):
+def create_app(config_name=None):
     app = Flask(__name__)
     
     # Configuração
     from app.config import config
+    if config_name is None:
+        config_name = os.environ.get('APP_ENV') or os.environ.get('FLASK_ENV') or 'default'
+    config_name = config_name.lower()
+    if config_name not in config:
+        config_name = 'default'
     app.config.from_object(config[config_name])
     
     # Extensões

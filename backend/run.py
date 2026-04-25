@@ -61,12 +61,13 @@ if __name__ == '__main__':
 
     # Telegram startup
     try:
-        from app.alerts.telegram_bot import TelegramBot
+        from app.alerts.telegram_bot import TelegramBot, send_startup_message
         bot = TelegramBot(
             app.config['TELEGRAM_BOT_TOKEN'],
             app.config['TELEGRAM_CHAT_ID']
         )
         bot.test_connection()
+        send_startup_message()
         print("[OK] Telegram conectado")
     except Exception as e:
         print(f"[WARN] Telegram startup falhou: {e}")

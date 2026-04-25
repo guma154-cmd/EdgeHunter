@@ -3,6 +3,7 @@ EdgeHunter — OddsPortal/OddsAgora Scraper Otimizado (Playwright)
 Meta: < 60 segundos por ciclo.
 """
 import asyncio
+import inspect
 import logging
 import random
 import time
@@ -10,10 +11,22 @@ import os
 from datetime import datetime
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
+try:
+    from playwright_stealth import stealth_async as _playwright_stealth
+except ImportError:
+    from playwright_stealth import stealth as _playwright_stealth
 from app.alerts.telegram_bot import send_message
 
 logger = logging.getLogger(__name__)
+
+
+async def _apply_stealth(page) -> None:
+    """
+    Compatibilidade com versões antigas e novas de playwright_stealth.
+    """
+    result = _playwright_stealth(page)
+    if inspect.isawaitable(result):
+        await result
 
 # OTIMIZAÇÃO 2 — Configuração de ligas via ENV ou Top 3
 DEFAULT_LEAGUES = {
@@ -128,7 +141,7 @@ class OddsPortalScraper:
         league_games = []
         page = await self.context.new_page()
         # CORREÇÃO 1 — Playwright Stealth
-        await stealth_async(page)
+        await _apply_stealth(page)
         
         try:
             # CORREÇÃO 4 — Sleep randômico

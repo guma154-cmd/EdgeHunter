@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 
 from app import create_app, db
-from app.data.scheduler import start_scheduler
+from app.data.scheduler import get_scheduler, start_scheduler
 
 app = create_app()
 
@@ -46,8 +46,14 @@ if __name__ == '__main__':
         except Exception as e:
             print(f'[WARN] Playwright browser indisponível: {e}')
 
+        if app.config.get('BOLTODDS_API_KEY'):
+            print('[OK] BoltOdds configurado')
+        else:
+            print('[WARN] BoltOdds não configurado')
+
     start_scheduler(app)
-    print("[OK] Scheduler iniciado")
+    print(f"[OK] Scheduler: {len(get_scheduler().get_jobs())} jobs ativos")
+    print("[OK] AutoTuner registrado")
 
     # Motor hibrido startup
     from app.engine.gemini_engine import init_ai_engine

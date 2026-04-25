@@ -83,6 +83,14 @@ def start_scheduler(app):
         name='Atualizar Métricas',
         replace_existing=True
     )
+
+    scheduler.add_job(
+        func=lambda: _autotuner_task(app),
+        trigger=CronTrigger(hour=6, minute=0),
+        id='autotuner',
+        name='AutoTuner Paramétrico',
+        replace_existing=True
+    )
     
     # Heartbeat a cada 2 horas
     scheduler.add_job(
@@ -94,7 +102,7 @@ def start_scheduler(app):
     )
     
     scheduler.start()
-    logger.info("✅ Scheduler iniciado com todas as tarefas")
+    logger.info(f"[OK] Scheduler: {len(scheduler.get_jobs())} jobs ativos")
     
     # Envio imediato do primeiro heartbeat
     try:
@@ -482,3 +490,15 @@ def _heartbeat_task(app):
                 logger.error("💓 Heartbeat FALHOU")
         except Exception as e:
             logger.error(f"💓 Heartbeat erro: {e}")
+
+
+def _autotuner_task(app):
+    with app.app_context():
+        try:
+            from app.engine.autotuner import AutoTuner
+
+            tuner = AutoTuner()
+            tuner.run_cycle()
+            logger.info("[AutoTuner] Ciclo executado")
+        except Exception as e:
+            logger.error(f"[AutoTuner] Erro: {e}")

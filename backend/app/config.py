@@ -40,7 +40,11 @@ class Config:
     # Engine Parameters
     MIN_EDGE_PCT = float(os.environ.get('MIN_EDGE_PCT', 3.0))
     MIN_SUREBET_PROFIT = float(os.environ.get('MIN_SUREBET_PROFIT', 1.0))
+    MAX_SUREBET_ROI = float(os.environ.get('MAX_SUREBET_ROI', 8.0))
     PAPER_TRADING_STAKE = float(os.environ.get('PAPER_TRADING_STAKE', 10.0))
+    STAKE_PCT = float(os.environ.get('STAKE_PCT', 0.25))
+    MIN_STAKE = float(os.environ.get('MIN_STAKE', 5.0))
+    BANKROLL_PER_BOOK = float(os.environ.get('BANKROLL_PER_BOOK', 20.0))
     ROLLING_WINDOW_DAYS = int(os.environ.get('ROLLING_WINDOW_DAYS', 30))
     DRIFT_THRESHOLD = float(os.environ.get('DRIFT_THRESHOLD', 0.05))
     AB_TEST_MIN_BETS = int(os.environ.get('AB_TEST_MIN_BETS', 50))

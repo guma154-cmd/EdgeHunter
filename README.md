@@ -253,3 +253,4 @@ EdgeHunter/
 └── start.bat             # Iniciar tudo com um clique
 ```
 # poll test Sat, Apr 25, 2026  8:14:17 PM
+# poll retry test Sat, Apr 25, 2026  8:17:19 PM

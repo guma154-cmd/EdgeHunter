@@ -1,5 +1,7 @@
 # EdgeHunter — Sistema de Value Betting com Auto-Aperfeiçoamento
 
+<!-- teste: validar GitHub Actions deploy -->
+
 ## Visão Geral
 
 O **EdgeHunter** é um sistema completo de detecção de value bets com loop de auto-aperfeiçoamento contínuo. Usa um ensemble de 4 modelos matemáticos cujos pesos se ajustam automaticamente baseados na performance real.

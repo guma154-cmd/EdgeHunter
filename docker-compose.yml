@@ -1,18 +1,16 @@
-version: '3.8'
-
 services:
   backend:
     build: ./backend
     container_name: edgehunter-backend
     restart: always
-    ports:
-      - "5000:5000"
+    network_mode: "host"
     volumes:
       - ./backend/database:/app/database
       - ./backend/models:/app/models
       - ./backend/.env:/app/.env
     env_file:
       - ./backend/.env
+    command: python run.py
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 30s

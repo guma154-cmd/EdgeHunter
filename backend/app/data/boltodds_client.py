@@ -66,8 +66,13 @@ class BoltOddsClient:
 
         return self._build_game_list()
 
-    def _process_message(self, data: dict):
+    def _process_message(self, data):
         """Processa mensagem do WebSocket e agrupa por jogo."""
+        if isinstance(data, list):
+            for item in data:
+                self._process_message(item)
+            return
+
         try:
             game_key = f"{data.get('home')}_{data.get('away')}_{data.get('date', '')}"
             book = data.get('sportsbook', '').lower()

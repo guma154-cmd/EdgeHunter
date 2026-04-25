@@ -132,14 +132,22 @@ def _fetch_odds_task(app):
             from app.alerts.telegram_bot import send_surebet_alert
             from app.detection.surebet_detector import SurebetDetector
             from app.engine.bankroll_manager import BankrollManager
+            from app.data.direct_scrapers import fetch_direct_sync
             
             bm = BankrollManager()
             games = []
             source = None
 
-            if app.config.get('BOLTODDS_API_KEY'):
-                from app.data.boltodds_client import fetch_games_boltodds
+            # 1. SCRAPERS DIRETOS (Prioridade Máxima)
+            logger.info("[Odds] Iniciando coleta direta...")
+            games = fetch_direct_sync()
+            if games:
+                source = 'direct'
+                logger.info(f"[Odds] Direto: {len(games)} jogos coletados")
 
+            # 2. BOLTODDS (Fallback 1)
+            if not games and app.config.get('BOLTODDS_API_KEY'):
+                from app.data.boltodds_client import fetch_games_boltodds
                 games = fetch_games_boltodds(
                     app.config['BOLTODDS_API_KEY'],
                     duration=20
@@ -148,9 +156,9 @@ def _fetch_odds_task(app):
                     source = 'boltodds'
                     logger.info(f"[Odds] BoltOdds: {len(games)} jogos")
 
+            # 3. THE ODDS API (Fallback 2)
             if not games and app.config.get('ODDS_API_KEY'):
                 from app.data.odds_api import OddsAPIClient
-
                 api_games = OddsAPIClient(app.config['ODDS_API_KEY']).fetch_all_value_games()
                 games = [
                     {
@@ -168,35 +176,36 @@ def _fetch_odds_task(app):
                     source = 'odds_api'
                     logger.info(f"[Odds] The Odds API: {len(games)} jogos")
 
+            # 4. ODDSPORTAL (Último recurso)
             if not games:
                 from app.data.oddsportal_scraper import fetch_games_sync
-
                 games = fetch_games_sync()
                 if games:
                     source = 'oddsportal'
+                    logger.info(f"[Odds] OddsPortal: {len(games)} jogos")
 
-            logger.info(f"[Odds] {len(games)} jogos coletados")
             if not games:
                 logger.warning("[Odds] Nenhum jogo - todas as fontes falharam")
                 return
             
-            detector = SurebetDetector(
-                min_profit_pct=current_app.config.get('MIN_SUREBET_PROFIT', 1.0),
-                max_profit_pct=current_app.config.get('MAX_SUREBET_ROI', 8.0),
-                stake_pct=current_app.config.get('STAKE_PCT', 0.25),
-                bankroll_per_book=current_app.config.get('BANKROLL_PER_BOOK', 20.0)
-            )
+            detector = SurebetDetector() # Usa valores do .env por padrão
             
             new_bets = 0
-            
-            # PRIMEIRA DETECÇÃO
             initial_opportunities = []
+            
+            # LOG DETALHADO de cada jogo analisado
             for game_data in games:
                 opps = detector.detect(game_data)
                 initial_opportunities.extend(opps)
+                
+                logger.debug(
+                    f"[Detector] {game_data['home_team']} vs {game_data['away_team']} "
+                    f"| casas={list(game_data['all_odds'].keys())} "
+                    f"| surebets={len(opps)}"
+                )
 
             if not initial_opportunities:
-                logger.info("[Odds] 0 oportunidades detectadas")
+                logger.info("[Odds] 0 oportunidades detectadas no lote atual")
                 return
 
             # CONFIRMAÇÃO RÁPIDA E FILTRO DE BANCA
@@ -205,10 +214,10 @@ def _fetch_odds_task(app):
                 # 1. Verificar se tem banca para cobrir
                 if not bm.can_cover(opp['bookmaker_A'], opp['stake_A'], 
                                    opp['bookmaker_B'], opp['stake_B']):
-                    logger.info(f"Surebet ignorada por falta de banca: {opp['bookmaker_A']}/{opp['bookmaker_B']}")
+                    logger.info(f"[Banca] Surebet ignorada: {opp['bookmaker_A']}/{opp['bookmaker_B']} (sem saldo)")
                     continue
                 
-                # 2. Confirmar no lote atual em vez de aguardar novo scrape
+                # 2. Confirmar no lote atual
                 if _quick_confirm(opp, games):
                     confirmed_opportunities.append(opp)
 
@@ -237,7 +246,7 @@ def _fetch_odds_task(app):
                     db.session.add(game)
                     db.session.flush()
                 
-                # Verificar se já existe essa surebet
+                # Verificar se já existe essa surebet (evitar duplicatas no mesmo jogo/casa)
                 existing = Surebet.query.filter_by(
                     game_id=game.id,
                     bookmaker_A=opp['bookmaker_A'],
@@ -273,9 +282,9 @@ def _fetch_odds_task(app):
             
             db.session.commit()
             logger.info(
-                f"[Odds] Fonte={source} | {len(initial_opportunities)} oportunidades detectadas | "
+                f"[Odds] Fonte={source} | {len(initial_opportunities)} detectadas | "
                 f"{len(confirmed_opportunities)} confirmadas | "
-                f"{new_bets} novas surebets"
+                f"{new_bets} novas"
             )
         
         except Exception as e:

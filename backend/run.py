@@ -13,7 +13,7 @@ logging.basicConfig(
 from app import create_app, db
 from app.data.scheduler import get_scheduler, start_scheduler
 
-# Timestamp de deploy: 2026-04-25 11:25
+# Fluxo de deploy validado: 2026-04-25 11:32
 app = create_app()
 
 if __name__ == '__main__':

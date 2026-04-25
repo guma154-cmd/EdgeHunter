@@ -13,7 +13,7 @@ logging.basicConfig(
 from app import create_app, db
 from app.data.scheduler import get_scheduler, start_scheduler
 
-# Teste de deploy automático - Loop Híbrido 2026-04-25
+# Timestamp de deploy: 2026-04-25 11:25
 app = create_app()
 
 if __name__ == '__main__':

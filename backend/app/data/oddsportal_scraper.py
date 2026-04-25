@@ -12,7 +12,10 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 import requests
-from playwright_stealth import stealth
+try:
+    from playwright_stealth import stealth_async
+except ImportError:
+    from playwright_stealth.stealth import stealth_async
 from app.alerts.telegram_bot import send_message
 
 logger = logging.getLogger(__name__)
@@ -165,7 +168,7 @@ class OddsPortalScraper:
         league_games = []
         page = await self.context.new_page()
         # CORREÇÃO 1 — Playwright Stealth
-        await stealth(page)
+        await stealth_async(page)
         
         try:
             # CORREÇÃO 4 — Sleep randômico

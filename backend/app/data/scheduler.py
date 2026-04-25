@@ -105,51 +105,13 @@ def start_scheduler(app):
     return scheduler
 
 
-def _confirm_surebet_fast(opp: dict) -> bool:
-    """
-    Re-scrapa APENAS o jogo detectado de forma instantânea.
-    Sem sleep — confirmação rápida para não perder a janela.
-    """
-    try:
-        game_url = opp.get('source_url', '')
-        if not game_url:
-            return True
-        
-        import asyncio
-        from playwright.async_api import async_playwright
-        from app.data.oddsportal_scraper import OddsPortalScraper
-        
-        async def quick_check():
-            scraper = OddsPortalScraper()
-            async with async_playwright() as p:
-                await scraper._init_browser(p)
-                page = await scraper.context.new_page()
-                game = await scraper._scrape_match_odds(
-                    page, game_url,
-                    opp['league'], opp['home_team'] + " vs " + opp['away_team']
-                )
-                await scraper.browser.close()
-                return game
-        
-        game = asyncio.run(quick_check())
-        if not game:
-            return False
-        
-        # Verificar se a arbitragem ainda existe
-        from app.detection.surebet_detector import SurebetDetector
-        detector = SurebetDetector()
-        new_opps = detector.detect(game)
-        
-        still_valid = any(
-            o['bookmaker_A'] == opp['bookmaker_A'] and
-            o['bookmaker_B'] == opp['bookmaker_B'] and
-            abs(o['odds_A'] - opp['odds_A']) < 0.05
-            for o in new_opps
-        )
-        return still_valid
-    except Exception as e:
-        logger.error(f"Erro na confirmação rápida: {e}")
-        return True
+def _quick_confirm(opp: dict, games: list[dict]) -> bool:
+    """Confirma se o jogo ainda está presente no lote atual sem novo scrape."""
+    return any(
+        g.get('home_team') == opp.get('home_team') and
+        g.get('away_team') == opp.get('away_team')
+        for g in games
+    )
 
 
 def _fetch_odds_task(app):
@@ -238,8 +200,8 @@ def _fetch_odds_task(app):
                     logger.info(f"Surebet ignorada por falta de banca: {opp['bookmaker_A']}/{opp['bookmaker_B']}")
                     continue
                 
-                # 2. Re-scrape instantâneo para confirmar odd
-                if _confirm_surebet_fast(opp):
+                # 2. Confirmar no lote atual em vez de aguardar novo scrape
+                if _quick_confirm(opp, games):
                     confirmed_opportunities.append(opp)
 
             for opp in confirmed_opportunities:

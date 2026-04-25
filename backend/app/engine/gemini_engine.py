@@ -103,7 +103,7 @@ class GeminiClient:
             }
         }
         try:
-            r = requests.post(url, json=payload, timeout=15)
+            r = requests.post(url, json=payload, timeout=8)
             r.raise_for_status()
             self.calls += 1
             data = r.json()

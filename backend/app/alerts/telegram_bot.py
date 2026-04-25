@@ -50,6 +50,13 @@ DEEPLINKS = {
     'pinnacle': 'https://www.pinnacle.com/pt/football/matchups'
 }
 
+SEARCH_LINKS = {
+    'bet365': 'https://www.bet365.com.br/#/AC/B1/C1/D8/',
+    'betano': 'https://www.betano.com/search/?q=',
+    'pinnacle': 'https://www.pinnacle.com/pt/football/matchups/',
+    'betfair': 'https://www.betfair.com/exchange/plus/football',
+}
+
 class TelegramBot:
     """
     Bot Telegram para envio de alertas do EdgeHunter.
@@ -281,6 +288,17 @@ def send_surebet_alert(opp: dict):
     # CORREÇÃO 3 — Obter deep links
     link_A = DEEPLINKS.get(opp['bookmaker_A'].lower(), '#')
     link_B = DEEPLINKS.get(opp['bookmaker_B'].lower(), '#')
+    home = opp['home_team'].replace(' ', '+')
+    away = opp['away_team'].replace(' ', '+')
+    query = f"{home}+{away}"
+
+    search_link_A = SEARCH_LINKS.get(opp['bookmaker_A'].lower(), '#')
+    search_link_B = SEARCH_LINKS.get(opp['bookmaker_B'].lower(), '#')
+
+    if opp['bookmaker_A'].lower() == 'betano':
+        search_link_A += query
+    if opp['bookmaker_B'].lower() == 'betano':
+        search_link_B += query
 
     msg = (
         f"🔒 <b>SUREBET — LUCRO GARANTIDO</b>\n"
@@ -295,13 +313,15 @@ def send_surebet_alert(opp: dict):
         f"📌 {opp['outcome_A'].upper()}\n"
         f"💰 Odd: <code>{opp['odds_A_raw'] if 'odds_A_raw' in opp else opp['odds_A']}</code>\n"
         f"💵 Stake: <b>R$ {opp['stake_A']}</b>\n"
-        f"🔗 <a href='{link_A}'>Abrir {opp['bookmaker_A'].upper()}</a>\n\n"
+        f"🔗 <a href='{link_A}'>Abrir {opp['bookmaker_A'].upper()}</a>\n"
+        f"🔎 <a href='{search_link_A}'>Buscar {opp['home_team']} vs {opp['away_team']}</a>\n\n"
         f"APOSTA 2️⃣\n"
         f"🏦 <b>{opp['bookmaker_B'].upper()}</b>\n"
         f"📌 {opp['outcome_B'].upper()}\n"
         f"💰 Odd: <code>{opp['odds_B_raw'] if 'odds_B_raw' in opp else opp['odds_B']}</code>\n"
         f"💵 Stake: <b>R$ {opp['stake_B']}</b>\n"
-        f"🔗 <a href='{link_B}'>Abrir {opp['bookmaker_B'].upper()}</a>\n\n"
+        f"🔗 <a href='{link_B}'>Abrir {opp['bookmaker_B'].upper()}</a>\n"
+        f"🔎 <a href='{search_link_B}'>Buscar {opp['home_team']} vs {opp['away_team']}</a>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"💼 Stake total: <code>R$ {opp['total_stake']}</code>\n"
         f"✅ Lucro líquido: <b>R$ {opp['guaranteed_profit']}</b>\n"

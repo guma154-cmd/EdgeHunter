@@ -6,5 +6,6 @@
       "Bash(git commit -m ' *)",
       "Bash(git tag *)"
     ]
-  }
+  },
+  "prefersReducedMotion": true
 }

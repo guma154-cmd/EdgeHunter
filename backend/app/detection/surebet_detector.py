@@ -82,9 +82,9 @@ class SurebetDetector:
                         stake_A = max(stake_A_calc, self.min_stake)
                         stake_B = max(stake_B_calc, self.min_stake)
                         
-                        # Arredondar para múltiplos de R$5 (evitar flag de bot)
-                        stake_A = math.ceil(stake_A / 5) * 5
-                        stake_B = math.ceil(stake_B / 5) * 5
+                        # Arredondar para múltiplos de R$1 (evitar flag de bot, mas manter precisão em banca pequena)
+                        stake_A = math.ceil(stake_A)
+                        stake_B = math.ceil(stake_B)
                         
                         # Recalcular lucro baseado no arredondamento real
                         actual_total_stake = stake_A + stake_B

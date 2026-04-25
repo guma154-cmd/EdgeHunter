@@ -256,18 +256,19 @@ def send_startup_message() -> bool:
 def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,
                    req_used: int = 0):
     """Envia status do sistema a cada 2 horas."""
-    from datetime import datetime
+    from datetime import datetime, timedelta, timezone
     from app.engine.bankroll_manager import BankrollManager
-    
-    now = datetime.utcnow().strftime('%d/%m %H:%M')
+
+    brt = timezone(timedelta(hours=-3))
+    now = datetime.now(brt).strftime('%d/%m %H:%M')
     status_ai = "✅" if ai_active else "❌"
-    
+
     bm = BankrollManager()
     bank_status = bm.get_status()
 
     msg = (
         f"🔒 <b>EdgeHunter — Heartbeat</b>\n"
-        f"🕐 {now} UTC\n\n"
+        f"🕐 {now} BRT\n\n"
         f"{status_ai} IA híbrida (Gemini + Groq)\n"
         f"⚙️ Scheduler: {len(scheduler_jobs)} jobs rodando\n"
         f"🔍 Fonte: OddsPortal Scraper\n"
@@ -281,8 +282,9 @@ def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,
 
 def send_surebet_alert(opp: dict):
     """Envia alerta de arbitragem (surebet) formatado."""
-    from datetime import datetime, timedelta
-    detected_at = datetime.utcnow()
+    from datetime import datetime, timedelta, timezone
+    brt = timezone(timedelta(hours=-3))
+    detected_at = datetime.now(brt)
     expires_at = detected_at + timedelta(seconds=90)
 
     # CORREÇÃO 3 — Obter deep links
@@ -303,9 +305,8 @@ def send_surebet_alert(opp: dict):
     msg = (
         f"🔒 <b>SUREBET — LUCRO GARANTIDO</b>\n"
         f"⏰ <b>EXECUTE EM ATÉ 90 SEGUNDOS</b>\n"
-        f"🕐 Detectado: {detected_at.strftime('%H:%M:%S')} UTC\n"
-        f"⚠️ Expira: {expires_at.strftime('%H:%M:%S')} UTC\n\n"
-        f"🏟 <code>{opp['home_team']}</code> vs <code>{opp['away_team']}</code>\n"
+        f"🕐 Detectado: {detected_at.strftime('%H:%M:%S')} BRT\n"
+        f"⚠️ Expira: {expires_at.strftime('%H:%M:%S')} BRT\n\n"        f"🏟 <code>{opp['home_team']}</code> vs <code>{opp['away_team']}</code>\n"
         f"🏆 {opp['league']}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"APOSTA 1️⃣\n"

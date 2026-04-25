@@ -26,12 +26,12 @@ git pull --ff-only origin "$BRANCH"
 NEW_HEAD="$(git rev-parse HEAD)"
 log "Git pull OK: ${CURRENT_HEAD:0:7} -> ${NEW_HEAD:0:7}"
 
-if git diff --name-only "$CURRENT_HEAD" "$NEW_HEAD" | grep -Eq '(^|/)(requirements\.txt|Dockerfile|docker-compose\.yml)$'; then
-  log "Dependencias mudaram; rebuild do backend"
-  docker_compose build --pull backend
+if git diff --name-only "$CURRENT_HEAD" "$NEW_HEAD" | grep -Eq '(^|/)(requirements\.txt|Dockerfile|docker-compose\.yml|\.py)$'; then
+  log "Codigo ou dependencias mudaram; rebuild do backend"
+  docker_compose build backend
   docker_compose up -d --remove-orphans backend
 else
-  log "Sem mudanca de imagem; restart do backend"
+  log "Sem mudanca estrutural; restart do backend"
   docker_compose restart backend
 fi
 

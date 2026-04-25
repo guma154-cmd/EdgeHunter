@@ -1,6 +1,8 @@
 name: Deploy EdgeHunter
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 concurrency:
@@ -9,7 +11,6 @@ concurrency:
 
 jobs:
   deploy:
-    if: false
     timeout-minutes: 25
     runs-on: self-hosted
     permissions:
@@ -22,7 +23,7 @@ jobs:
     steps:
       - name: Validar clone e diretório real de deploy
         run: |
-          : "${DEPLOY_DIR:=/srv/edgehunter}"
+          DEPLOY_DIR="/home/telematica/EdgeHunter"
           echo "Deploy dir: $DEPLOY_DIR"
 
           if [ ! -d "$DEPLOY_DIR/.git" ]; then
@@ -30,14 +31,9 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f "$DEPLOY_DIR/backend/.env" ]; then
-            echo "ERRO: $DEPLOY_DIR/backend/.env não encontrado no servidor"
-            exit 1
-          fi
-
       - name: Atualizar código no clone persistente
         run: |
-          : "${DEPLOY_DIR:=/srv/edgehunter}"
+          DEPLOY_DIR="/home/telematica/EdgeHunter"
           cd "$DEPLOY_DIR"
           git fetch --prune origin
           git checkout main
@@ -45,20 +41,19 @@ jobs:
 
       - name: Build e restart containers
         run: |
-          : "${DEPLOY_DIR:=/srv/edgehunter}"
+          DEPLOY_DIR="/home/telematica/EdgeHunter"
           cd "$DEPLOY_DIR"
 
-          docker_compose() {
-            if docker compose version >/dev/null 2>&1; then
-              docker compose "$@"
-            else
-              docker-compose "$@"
-            fi
-          }
+          # Tentar docker compose (v2) primeiro, depois v1
+          if docker compose version >/dev/null 2>&1; then
+            DOCKER_CMD="docker compose"
+          else
+            DOCKER_CMD="docker-compose"
+          fi
 
-          docker_compose down --remove-orphans
-          docker_compose build --pull backend
-          docker_compose up -d --remove-orphans backend
+          $DOCKER_CMD down --remove-orphans
+          $DOCKER_CMD build --pull backend
+          $DOCKER_CMD up -d --remove-orphans backend
 
       - name: Verificar saúde do container
         run: |

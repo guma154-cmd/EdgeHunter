@@ -467,14 +467,16 @@ def _heartbeat_task(app):
             from app.alerts.telegram_bot import send_heartbeat
             from app.engine.gemini_engine import get_ai_engine
             from app.models import Surebet
-            from datetime import datetime, date
+            from datetime import datetime, date, timedelta, timezone
 
             ai = get_ai_engine()
 
-            surebets_today = Surebet.query.filter(
-                Surebet.created_at >= datetime.combine(date.today(), datetime.min.time())
-            ).count()
+            brt = timezone(timedelta(hours=-3))
+            today_brt = datetime.now(brt).date()
 
+            surebets_today = Surebet.query.filter(
+                Surebet.created_at >= datetime.combine(today_brt, datetime.min.time())
+            ).count()
             scheduler = get_scheduler()
             jobs = scheduler.get_jobs()
 

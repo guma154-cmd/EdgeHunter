@@ -15,11 +15,8 @@ import requests
 try:
     from playwright_stealth import stealth_async
 except ImportError:
-    try:
-        from playwright_stealth.stealth import Stealth as stealth_async
-    except ImportError:
-        # Fallback se nada funcionar: função dummy para não quebrar o código
-        async def stealth_async(page): pass
+    async def stealth_async(page):
+        pass
 from app.alerts.telegram_bot import send_message
 
 logger = logging.getLogger(__name__)

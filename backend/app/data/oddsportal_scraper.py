@@ -181,16 +181,16 @@ class OddsPortalScraper:
             if not match_links:
                 found_links = []
                 try:
-                    await page.goto(_absolute_url(url), wait_until="domcontentloaded", timeout=15000)
+                    await page.goto(_absolute_url(url), wait_until="domcontentloaded", timeout=30000)
                     
                     try:
                         btn = page.get_by_role("button", name="Aceito")
-                        if await btn.is_visible(timeout=2000):
+                        if await btn.is_visible(timeout=5000):
                             await btn.click()
                     except Exception:
                         pass
                     
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(2000)
                     
                     links_data = await page.eval_on_selector_all('a', '''elements => elements.map(e => ({
                         href: e.href,
@@ -240,8 +240,8 @@ class OddsPortalScraper:
 
             content = None
             try:
-                await page.goto(_absolute_url(url), wait_until="domcontentloaded", timeout=12000)
-                await page.wait_for_timeout(1000)
+                await page.goto(_absolute_url(url), wait_until="domcontentloaded", timeout=30000)
+                await page.wait_for_timeout(1500)
                 content = await page.content()
             except Exception as exc:
                 logger.warning(f"Fallback HTTP ativado para partida {url}: {exc}")
@@ -296,7 +296,7 @@ def fetch_games_sync() -> list:
         logger.info(f"[OddsPortal] Coleta concluída em {elapsed:.1f}s | Jogos: {len(games)}")
         
         if elapsed > 90:
-            send_message(f"⚠️ *Scraper Lento*: {elapsed:.1f}s detectados. Meta < 60s.")
+            send_message(f"⚠️ <b>Scraper Lento</b>: {elapsed:.1f}s detectados. Meta &lt; 60s.")
             
         return games
     except Exception as e:

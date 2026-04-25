@@ -164,8 +164,46 @@ def _fetch_odds_task(app):
             from app.engine.bankroll_manager import BankrollManager
             
             bm = BankrollManager()
-            from app.data.oddsportal_scraper import fetch_games_sync
-            games = fetch_games_sync()
+            games = []
+            source = None
+
+            if app.config.get('BOLTODDS_API_KEY'):
+                from app.data.boltodds_client import fetch_games_boltodds
+
+                games = fetch_games_boltodds(
+                    app.config['BOLTODDS_API_KEY'],
+                    duration=20
+                )
+                if games:
+                    source = 'boltodds'
+                    logger.info(f"[Odds] BoltOdds: {len(games)} jogos")
+
+            if not games and app.config.get('ODDS_API_KEY'):
+                from app.data.odds_api import OddsAPIClient
+
+                api_games = OddsAPIClient(app.config['ODDS_API_KEY']).fetch_all_value_games()
+                games = [
+                    {
+                        'home_team': g['home_team'],
+                        'away_team': g['away_team'],
+                        'league': g['league'],
+                        'match_date': g['match_date'],
+                        'source': 'odds_api',
+                        'all_odds': g.get('soft_odds', {}),
+                    }
+                    for g in api_games
+                    if len(g.get('soft_odds', {})) >= 2
+                ]
+                if games:
+                    source = 'odds_api'
+                    logger.info(f"[Odds] The Odds API: {len(games)} jogos")
+
+            if not games:
+                from app.data.oddsportal_scraper import fetch_games_sync
+
+                games = fetch_games_sync()
+                if games:
+                    source = 'oddsportal'
 
             logger.info(f"[Odds] {len(games)} jogos coletados")
             if not games:
@@ -265,7 +303,7 @@ def _fetch_odds_task(app):
             
             db.session.commit()
             logger.info(
-                f"[Odds] {len(initial_opportunities)} oportunidades detectadas | "
+                f"[Odds] Fonte={source} | {len(initial_opportunities)} oportunidades detectadas | "
                 f"{len(confirmed_opportunities)} confirmadas | "
                 f"{new_bets} novas surebets"
             )

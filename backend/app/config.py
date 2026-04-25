@@ -25,6 +25,7 @@ class Config:
     RAPIDAPI_KEY = os.environ.get('RAPIDAPI_KEY', '')
     APIFOOTBALL_KEY = os.environ.get('APIFOOTBALL_KEY', '')
     ODDSAPIIO_KEY = os.environ.get('ODDSAPIIO_KEY', '')
+    BOLTODDS_API_KEY = os.environ.get('BOLTODDS_API_KEY', '')
     ODDS_API_BASE_URL = 'https://api.the-odds-api.com/v4'
     FOOTBALL_DATA_BASE_URL = 'https://api.football-data.org/v4'
     

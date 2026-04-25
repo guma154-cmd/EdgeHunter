@@ -3,6 +3,7 @@
 <!-- teste: validar GitHub Actions deploy -->
 <!-- teste local: push para validar atualização no servidor -->
 <!-- teste webhook: push para validar deploy local via listener -->
+<!-- teste webhook final: push apos cadastro do hook GitHub -->
 
 ## Visão Geral
 

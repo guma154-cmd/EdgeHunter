@@ -10,6 +10,10 @@ services:
       - ./backend/.env:/app/.env
     env_file:
       - ./backend/.env
+    environment:
+      - BOLTODDS_API_KEY=${BOLTODDS_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     command: python run.py
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]

@@ -51,6 +51,19 @@ if __name__ == '__main__':
         else:
             print('[WARN] BoltOdds não configurado')
 
+        # Telegram startup (Mover para dentro do contexto)
+        try:
+            from app.alerts.telegram_bot import TelegramBot, send_startup_message
+            bot = TelegramBot(
+                app.config['TELEGRAM_BOT_TOKEN'],
+                app.config['TELEGRAM_CHAT_ID']
+            )
+            bot.test_connection()
+            send_startup_message()
+            print("[OK] Telegram conectado")
+        except Exception as e:
+            print(f"[WARN] Telegram startup falhou: {e}")
+
     start_scheduler(app)
     print(f"[OK] Scheduler: {len(get_scheduler().get_jobs())} jobs ativos")
     print("[OK] AutoTuner registrado")
@@ -64,19 +77,6 @@ if __name__ == '__main__':
         print("[OK] Motor IA hibrido ativo: Gemini 2.5 Flash + Groq Llama 3.3 70B")
     else:
         print("[WARN] Chaves de IA nao configuradas — rodando sem filtro de IA")
-
-    # Telegram startup
-    try:
-        from app.alerts.telegram_bot import TelegramBot, send_startup_message
-        bot = TelegramBot(
-            app.config['TELEGRAM_BOT_TOKEN'],
-            app.config['TELEGRAM_CHAT_ID']
-        )
-        bot.test_connection()
-        send_startup_message()
-        print("[OK] Telegram conectado")
-    except Exception as e:
-        print(f"[WARN] Telegram startup falhou: {e}")
 
     app.run(
         host='0.0.0.0',

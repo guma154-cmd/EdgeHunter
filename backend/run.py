@@ -21,19 +21,30 @@ if __name__ == '__main__':
         print("[OK] Database inicializado")
         
         from app.engine.ensemble import ModelEnsemble, _set_global_ensemble
-        import os
         
         # Carregar ensemble do disco ou alertar para treinar do zero
-        if ModelEnsemble.exists():
+        if os.path.exists('models/ensemble_state.joblib'):
             try:
                 ensemble = ModelEnsemble.load()
                 _set_global_ensemble(ensemble)
                 print('[OK] Ensemble carregado do disco')
             except Exception as e:
-                print(f'[WARN] Falha ao carregar ensemble: {e}')
-                print('[INFO] Execute seed_historical.py para treinar')
+                print(f'[ERRO] Falha ao carregar ensemble: {e}')
+                print('[WARN] Execute: python seed_historical.py')
         else:
-            print('[WARN] Ensemble nao encontrado — execute seed_historical.py')
+            print('[WARN] Ensemble não encontrado')
+            print('[WARN] Execute: python seed_historical.py')
+
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                browser_path = p.chromium.executable_path
+            if browser_path and os.path.exists(browser_path):
+                print('[OK] Playwright browser disponível')
+            else:
+                print('[WARN] Playwright browser não encontrado')
+        except Exception as e:
+            print(f'[WARN] Playwright browser indisponível: {e}')
 
     start_scheduler(app)
     print("[OK] Scheduler iniciado")
@@ -60,4 +71,9 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"[WARN] Telegram startup falhou: {e}")
 
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    app.run(
+        host='0.0.0.0',
+        port=5000,
+        debug=app.config.get('DEBUG', False),
+        use_reloader=False
+    )

@@ -9,8 +9,10 @@ import random
 import time
 import os
 from datetime import datetime
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
+import requests
 try:
     from playwright_stealth import stealth_async as _playwright_stealth_async
 except ImportError:
@@ -117,6 +119,7 @@ USER_AGENTS = [
 
 # CORREÇÃO 4 — Headers realistas
 REALISTIC_HEADERS = {
+    'User-Agent': USER_AGENTS[0],
     'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
     'Accept-Encoding': 'gzip, deflate, br',
     'Referer': 'https://www.google.com.br/',
@@ -132,6 +135,40 @@ _games_cache = {
     'date': None,
     'match_urls': {}  # {league_name: [(url, text), ...]}
 }
+
+
+def _absolute_url(href: str) -> str:
+    return urljoin('https://www.oddsagora.com.br', href)
+
+
+def _fetch_html_via_requests(url: str, timeout: int = 30) -> str | None:
+    try:
+        response = requests.get(
+            _absolute_url(url),
+            headers={**REALISTIC_HEADERS, 'User-Agent': random.choice(USER_AGENTS)},
+            timeout=timeout
+        )
+        if response.status_code == 200:
+            return response.text
+        logger.warning(f"HTTP fallback retornou {response.status_code} para {url}")
+    except Exception as exc:
+        logger.warning(f"HTTP fallback falhou para {url}: {exc}")
+    return None
+
+
+def _extract_match_links_from_html(html: str) -> list:
+    soup = BeautifulSoup(html, 'lxml')
+    found_links = []
+
+    for anchor in soup.find_all('a', href=True):
+        href = anchor['href']
+        text = anchor.get_text(' ', strip=True)
+        if "/h2h/" in href and "#" in href and "vs" in text.lower():
+            absolute_href = _absolute_url(href)
+            if absolute_href not in [link[0] for link in found_links]:
+                found_links.append((absolute_href, text))
+
+    return found_links
 
 def _get_cached_match_links(league_name: str) -> list:
     today = datetime.utcnow().strftime('%Y-%m-%d')
@@ -197,29 +234,36 @@ class OddsPortalScraper:
             match_links = _get_cached_match_links(league_name)
             
             if not match_links:
-                # OTIMIZAÇÃO 4 — Timeout agressivo (15s)
-                await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                
-                # Aceitar cookies rápido
-                try:
-                    btn = page.get_by_role("button", name="Aceito")
-                    if await btn.is_visible(timeout=2000): await btn.click()
-                except: pass
-                
-                await page.wait_for_timeout(1000)
-                
-                links_data = await page.eval_on_selector_all('a', '''elements => elements.map(e => ({
-                    href: e.href,
-                    text: e.innerText
-                }))''')
-                
                 found_links = []
-                for l in links_data:
-                    href = l['href']
-                    text = l['text']
-                    if "/h2h/" in href and "#" in href and "vs" in text.lower():
-                        if href not in [m[0] for m in found_links]:
-                            found_links.append((href, text))
+                try:
+                    await page.goto(_absolute_url(url), wait_until="domcontentloaded", timeout=15000)
+                    
+                    try:
+                        btn = page.get_by_role("button", name="Aceito")
+                        if await btn.is_visible(timeout=2000):
+                            await btn.click()
+                    except Exception:
+                        pass
+                    
+                    await page.wait_for_timeout(1000)
+                    
+                    links_data = await page.eval_on_selector_all('a', '''elements => elements.map(e => ({
+                        href: e.href,
+                        text: e.innerText
+                    }))''')
+                    
+                    for link_data in links_data:
+                        href = link_data['href']
+                        text = link_data['text']
+                        if "/h2h/" in href and "#" in href and "vs" in text.lower():
+                            absolute_href = _absolute_url(href)
+                            if absolute_href not in [match[0] for match in found_links]:
+                                found_links.append((absolute_href, text))
+                except Exception as exc:
+                    logger.warning(f"Fallback HTTP ativado para {league_name}: {exc}")
+                    html = _fetch_html_via_requests(url, timeout=30)
+                    if html:
+                        found_links = _extract_match_links_from_html(html)
                 
                 match_links = found_links[:5] # Limite de 5 jogos por liga para velocidade
                 _update_cache(league_name, match_links)
@@ -243,17 +287,24 @@ class OddsPortalScraper:
             # CORREÇÃO 4 — Sleep randômico
             await asyncio.sleep(random.uniform(1.0, 2.0))
             
-            # OTIMIZAÇÃO 4 — Timeout agressivo
-            await page.goto(url, wait_until="domcontentloaded", timeout=12000)
-            await page.wait_for_timeout(1000) 
-            
             clean_text = match_text.split('-')[0].strip()
             if " vs " in clean_text.lower():
                 home_team, away_team = [t.strip() for t in clean_text.split(" vs ")]
             else:
                 home_team, away_team = "Home", "Away"
 
-            content = await page.content()
+            content = None
+            try:
+                await page.goto(_absolute_url(url), wait_until="domcontentloaded", timeout=12000)
+                await page.wait_for_timeout(1000)
+                content = await page.content()
+            except Exception as exc:
+                logger.warning(f"Fallback HTTP ativado para partida {url}: {exc}")
+                content = _fetch_html_via_requests(url, timeout=30)
+
+            if not content:
+                return None
+
             soup = BeautifulSoup(content, 'lxml')
             
             all_odds = {}

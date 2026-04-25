@@ -1,0 +1,14 @@
+[Unit]
+Description=EdgeHunter Webhook Listener
+After=network.target
+
+[Service]
+Type=simple
+User=telematica
+WorkingDirectory=/home/telematica
+ExecStart=/usr/bin/webhook -hooks /home/telematica/hooks.json -port 9000 -verbose
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

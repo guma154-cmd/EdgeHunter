@@ -2,6 +2,7 @@
 
 <!-- teste: validar GitHub Actions deploy -->
 <!-- teste local: push para validar atualização no servidor -->
+<!-- teste webhook: push para validar deploy local via listener -->
 
 ## Visão Geral
 
@@ -182,6 +183,36 @@ Pré-requisitos no servidor:
 - O arquivo `backend/.env` deve existir dentro desse diretório
 - Docker com `docker compose` ou `docker-compose` deve estar instalado
 - O runner self-hosted deve ter acesso a `git`, `curl` e `docker`
+
+## Deploy por Webhook Local
+
+Como fallback mais robusto ao runner self-hosted, o repositório inclui os artefatos do webhook local em `deploy/server/`:
+
+- `deploy/server/deploy.sh`
+- `deploy/server/hooks.json`
+- `deploy/server/webhook.service`
+
+Instalacao no servidor:
+
+```bash
+sudo cp deploy/server/deploy.sh /home/telematica/deploy.sh
+sudo cp deploy/server/hooks.json /home/telematica/hooks.json
+sudo cp deploy/server/webhook.service /etc/systemd/system/webhook.service
+sudo chown telematica:telematica /home/telematica/deploy.sh /home/telematica/hooks.json
+sudo chmod +x /home/telematica/deploy.sh
+sudo apt-get update && sudo apt-get install -y webhook
+sudo systemctl daemon-reload
+sudo systemctl enable --now webhook
+```
+
+Webhook no GitHub:
+
+- Payload URL: `http://100.0.4.90:9000/hooks/deploy-edgehunter`
+- Content type: `application/json`
+- Secret: `edgehunter-webhook-secret-2026`
+- Events: `Just the push event`
+
+O arquivo `.github/workflows/deploy.yml` foi mantido apenas como backup manual e nao roda mais em `push`.
 
 ## Paper Trading (30 dias)
 

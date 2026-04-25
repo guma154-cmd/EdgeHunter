@@ -1,0 +1,25 @@
+[
+  {
+    "id": "deploy-edgehunter",
+    "execute-command": "/home/telematica/deploy.sh",
+    "command-working-directory": "/home/telematica/EdgeHunter",
+    "response-message": "Deploy iniciado",
+    "include-command-output-in-response": true,
+    "pass-arguments-to-command": [
+      {
+        "source": "payload",
+        "name": "head_commit.id"
+      }
+    ],
+    "trigger-rule": {
+      "match": {
+        "type": "payload-hmac-sha1",
+        "secret": "edgehunter-webhook-secret-2026",
+        "parameter": {
+          "source": "header",
+          "name": "X-Hub-Signature"
+        }
+      }
+    }
+  }
+]

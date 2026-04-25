@@ -1,8 +1,7 @@
 name: Deploy EdgeHunter
 
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
 
 concurrency:
   group: deploy-edgehunter-main
@@ -10,6 +9,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: false
     timeout-minutes: 25
     runs-on: self-hosted
     permissions:

@@ -1,8 +1,12 @@
 FROM python:3.12-slim
 
-ENV PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=300000
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10 \
+    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=600000
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ curl wget gnupg \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 \
     libcups2 libdrm2 libxkbcommon0 libxcomposite1 \
@@ -14,10 +18,9 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --prefer-binary --progress-bar off --no-cache-dir -r requirements.txt
 
-RUN playwright install chromium
-RUN playwright install-deps chromium
+RUN python -m playwright install chromium
 
 COPY . .
 

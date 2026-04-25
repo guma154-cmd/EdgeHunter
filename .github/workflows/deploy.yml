@@ -4,32 +4,97 @@ on:
   push:
     branches: [ main ]
 
+concurrency:
+  group: deploy-edgehunter-main
+  cancel-in-progress: true
+
 jobs:
   deploy:
+    timeout-minutes: 25
     runs-on: self-hosted
+    permissions:
+      contents: read
+    env:
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
-
-      - name: Verificar .env no servidor
+      - name: Validar clone e diretório real de deploy
         run: |
-          if [ ! -f backend/.env ]; then
-            echo "ERRO: backend/.env não encontrado no servidor"
+          : "${DEPLOY_DIR:=/srv/edgehunter}"
+          echo "Deploy dir: $DEPLOY_DIR"
+
+          if [ ! -d "$DEPLOY_DIR/.git" ]; then
+            echo "ERRO: clone Git não encontrado em $DEPLOY_DIR"
             exit 1
           fi
 
+          if [ ! -f "$DEPLOY_DIR/backend/.env" ]; then
+            echo "ERRO: $DEPLOY_DIR/backend/.env não encontrado no servidor"
+            exit 1
+          fi
+
+      - name: Atualizar código no clone persistente
+        run: |
+          : "${DEPLOY_DIR:=/srv/edgehunter}"
+          cd "$DEPLOY_DIR"
+          git fetch --prune origin
+          git checkout main
+          git pull --ff-only origin main
+
       - name: Build e restart containers
         run: |
-          docker-compose down --remove-orphans
-          docker-compose build --no-cache
-          docker-compose up -d
+          : "${DEPLOY_DIR:=/srv/edgehunter}"
+          cd "$DEPLOY_DIR"
+
+          docker_compose() {
+            if docker compose version >/dev/null 2>&1; then
+              docker compose "$@"
+            else
+              docker-compose "$@"
+            fi
+          }
+
+          docker_compose down --remove-orphans
+          docker_compose build --pull backend
+          docker_compose up -d --remove-orphans backend
 
       - name: Verificar saúde do container
         run: |
-          sleep 15
-          docker-compose ps
-          curl -f http://localhost:5000/api/health || exit 1
+          : "${DEPLOY_DIR:=/srv/edgehunter}"
+          cd "$DEPLOY_DIR"
+
+          docker_compose() {
+            if docker compose version >/dev/null 2>&1; then
+              docker compose "$@"
+            else
+              docker-compose "$@"
+            fi
+          }
+
+          docker_compose ps
+
+          for attempt in {1..12}; do
+            if curl -fsS http://localhost:5000/api/health >/dev/null; then
+              exit 0
+            fi
+
+            echo "Healthcheck falhou (tentativa $attempt/12), aguardando..."
+            sleep 10
+          done
+
+          echo "ERRO: backend não respondeu em até 120s"
+          docker_compose logs --tail=80 backend
+          exit 1
 
       - name: Log de startup
         run: |
-          docker-compose logs --tail=30 backend
+          : "${DEPLOY_DIR:=/srv/edgehunter}"
+          cd "$DEPLOY_DIR"
+
+          if docker compose version >/dev/null 2>&1; then
+            docker compose logs --tail=30 backend
+          else
+            docker-compose logs --tail=30 backend
+          fi

@@ -1,6 +1,7 @@
 # EdgeHunter — Sistema de Value Betting com Auto-Aperfeiçoamento
 
 <!-- teste: validar GitHub Actions deploy -->
+<!-- teste local: push para validar atualização no servidor -->
 
 ## Visão Geral
 
@@ -165,6 +166,22 @@ POST /api/models/train        # Forçar retraining
 - **Live Feed**: Apostas detectadas em tempo real com filtros
 - **Analytics**: ROI por liga, CLV analysis, distribuição de edge
 - **Modelo & IA**: Pesos do ensemble, drift detection, histórico de versões
+
+## Deploy Automático
+
+O workflow de deploy em `.github/workflows/deploy.yml` roda em um runner self-hosted e faz o deploy a partir do clone persistente no servidor, não do workspace temporário do GitHub Actions.
+
+Configure a variável de repositório `DEPLOY_DIR` com o caminho real do projeto no servidor, por exemplo:
+
+```text
+/srv/edgehunter
+```
+
+Pré-requisitos no servidor:
+- O repositório já deve estar clonado em `DEPLOY_DIR`
+- O arquivo `backend/.env` deve existir dentro desse diretório
+- Docker com `docker compose` ou `docker-compose` deve estar instalado
+- O runner self-hosted deve ter acesso a `git`, `curl` e `docker`
 
 ## Paper Trading (30 dias)
 

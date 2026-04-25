@@ -1,5 +1,5 @@
 [Unit]
-Description=EdgeHunter Webhook Listener
+Description=EdgeHunter Webhook
 After=network.target
 
 [Service]

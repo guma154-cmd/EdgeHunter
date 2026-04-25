@@ -14,7 +14,7 @@
     "trigger-rule": {
       "match": {
         "type": "payload-hmac-sha1",
-        "secret": "edgehunter-webhook-secret-2026",
+        "secret": "edgehunter-webhook-2026",
         "parameter": {
           "source": "header",
           "name": "X-Hub-Signature"

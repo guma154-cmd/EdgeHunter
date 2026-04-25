@@ -44,7 +44,7 @@ def _build_prompt(
     home_team: str, away_team: str, league: str, selection: str,
     odds: float, bookmaker: str, our_prob: float, implied_prob: float,
     edge_pct: float, pinnacle_prob: Optional[float], model_weights: dict,
-    match_date: str
+    match_date: str, additional_context: str = ""
 ) -> str:
     sel_map = {
         "home": f"Vitória {home_team}",
@@ -59,10 +59,13 @@ def _build_prompt(
         status = "alinhado" if abs(diff) < 0.05 else "DIVERGENTE"
         pin_line = f"\n- Modelo vs Pinnacle: {diff:+.1%} ({status})"
 
+    context_block = f"\nContexto adicional:\n{additional_context}\n" if additional_context else ""
+
     return f"""OPORTUNIDADE DE VALUE BET
 
 Jogo: {home_team} vs {away_team}
 Liga: {league} | Data: {match_date}
+{context_block}
 
 APOSTA: {sel_label} @ {odds:.2f} ({bookmaker})
 - Odd implica: {implied_prob:.1%}
@@ -190,17 +193,25 @@ class HybridAIEngine:
         edge_pct: float,
         pinnacle_prob: Optional[float] = None,
         model_weights: dict = None,
-        match_date: str = ""
+        match_date: str = "",
+        additional_context: str = ""
     ) -> dict:
         """
         Analisa value bet via Gemini → Groq → degradado.
         Retorna dict com decision, confidence, reasoning, risk_flags, provider.
         """
+        if not additional_context:
+            try:
+                from app.data.context_builder import get_match_context
+                additional_context = get_match_context(home_team, away_team, league)
+            except Exception as exc:
+                logger.debug(f"[IA] Contexto indisponível: {exc}")
+
         model_weights = model_weights or {}
         prompt = _build_prompt(
             home_team, away_team, league, selection, odds, bookmaker,
             our_prob, implied_prob, edge_pct, pinnacle_prob,
-            model_weights, match_date
+            model_weights, match_date, additional_context
         )
 
         # 1. Tentar Gemini

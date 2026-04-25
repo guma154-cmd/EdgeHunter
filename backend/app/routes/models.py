@@ -82,12 +82,12 @@ def ai_stats():
 def trigger_train():
     """Dispara retraining manual."""
     try:
-        from app.data.scheduler import _retrain_task
+        from app.data.scheduler import _daily_retrain_task
         from flask import current_app
         import threading
 
         thread = threading.Thread(
-            target=_retrain_task,
+            target=_daily_retrain_task,
             args=(current_app._get_current_object(),)
         )
         thread.daemon = True

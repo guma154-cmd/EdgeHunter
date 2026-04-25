@@ -5,6 +5,7 @@ APScheduler gerencia todas as tarefas periódicas do sistema.
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
+import json
 import logging
 import pytz
 from datetime import datetime, date, timedelta
@@ -58,7 +59,7 @@ def start_scheduler(app):
     
     # Tarefa 3: Retraining diário (4h UTC)
     scheduler.add_job(
-        func=lambda: _retrain_task(app),
+        func=lambda: _daily_retrain_task(app),
         trigger=CronTrigger(hour=retrain_hour, minute=0),
         id='daily_retrain',
         name='Retraining Diário',
@@ -156,7 +157,6 @@ def _fetch_odds_task(app):
     with app.app_context():
         try:
             from flask import current_app
-            from app.data.oddsportal_scraper import fetch_games_sync
             from app.models import Game, Surebet
             from app import db
             from app.alerts.telegram_bot import send_surebet_alert
@@ -164,10 +164,12 @@ def _fetch_odds_task(app):
             from app.engine.bankroll_manager import BankrollManager
             
             bm = BankrollManager()
+            from app.data.oddsportal_scraper import fetch_games_sync
             games = fetch_games_sync()
-            
+
+            logger.info(f"[Odds] {len(games)} jogos coletados")
             if not games:
-                logger.error("fetch_odds FALHOU: scraper retornou 0 jogos.")
+                logger.warning("[Odds] Nenhum jogo - todas as fontes falharam")
                 return
             
             detector = SurebetDetector(
@@ -186,7 +188,7 @@ def _fetch_odds_task(app):
                 initial_opportunities.extend(opps)
 
             if not initial_opportunities:
-                logger.info(f"fetch_odds OK: {len(games)} jogos coletados | 0 oportunidades detectadas.")
+                logger.info("[Odds] 0 oportunidades detectadas")
                 return
 
             # CONFIRMAÇÃO RÁPIDA E FILTRO DE BANCA
@@ -263,17 +265,15 @@ def _fetch_odds_task(app):
             
             db.session.commit()
             logger.info(
-                "fetch_odds OK: "
-                f"{len(games)} jogos coletados | "
-                f"{len(initial_opportunities)} oportunidades detectadas | "
+                f"[Odds] {len(initial_opportunities)} oportunidades detectadas | "
                 f"{len(confirmed_opportunities)} confirmadas | "
-                f"{new_bets} novas surebets."
+                f"{new_bets} novas surebets"
             )
         
         except Exception as e:
             import traceback
             traceback.print_exc()
-            logger.error(f"fetch_odds FALHOU: {e}")
+            logger.error(f"[Odds] FALHOU: {e}")
 
 
 def _check_results_task(app):
@@ -289,13 +289,13 @@ def _check_results_task(app):
             bm = BankrollManager()
             fd_key = current_app.config.get('FOOTBALL_DATA_API_KEY', '')
             if not fd_key:
-                logger.error("check_results FALHOU: FOOTBALL_DATA_API_KEY não configurada.")
+                logger.error("[Results] FOOTBALL_DATA_API_KEY não configurada")
                 return
             
             client = FootballDataClient(fd_key)
             recent = client.get_recent_results()
             if not recent:
-                logger.error("check_results FALHOU: API não retornou resultados recentes.")
+                logger.error("[Results] API não retornou resultados recentes")
                 return
 
             updated_games = 0
@@ -335,46 +335,37 @@ def _check_results_task(app):
                     settled_surebets += 1
 
             db.session.commit()
-            logger.info(
-                "check_results OK: "
-                f"{updated_games} jogos atualizados | "
-                f"{settled_surebets} surebets liquidadas."
-            )
+            logger.info(f"[Results] {updated_games} partidas atualizadas")
+            if settled_surebets:
+                logger.info(f"[Results] {settled_surebets} surebets liquidadas")
         except Exception as e:
-            logger.error(f"check_results FALHOU: {e}")
+            logger.error(f"[Results] FALHOU: {e}")
 
 
-def _retrain_task(app):
+def _daily_retrain_task(app):
     """Retraining diário."""
     with app.app_context():
         try:
-            from flask import current_app
             from app.data.football_data import FootballDataClient
             from app.engine.ensemble import _get_global_ensemble, _set_global_ensemble
 
             ensemble = _get_global_ensemble()
-            if ensemble is None:
-                logger.error("daily_retrain FALHOU: ensemble global não carregado.")
+            if not ensemble:
+                logger.warning("[Retrain] Ensemble não carregado")
                 return
 
-            fd_key = current_app.config.get('FOOTBALL_DATA_API_KEY', '')
-            if not fd_key:
-                logger.error("daily_retrain FALHOU: FOOTBALL_DATA_API_KEY não configurada.")
-                return
-
-            client = FootballDataClient(fd_key)
+            client = FootballDataClient(app.config.get('FOOTBALL_DATA_API_KEY', ''))
             df = client.get_historical_matches_df()
 
-            if df is None or len(df) <= 100:
-                logger.warning("Retraining: dados insuficientes")
-                return
-
-            ensemble.train(df)
-            ensemble.save()
-            _set_global_ensemble(ensemble)
-            logger.info(f"Retraining OK: {len(df)} jogos")
+            if df is not None and len(df) >= 100:
+                ensemble.train(df)
+                ensemble.save()
+                _set_global_ensemble(ensemble)
+                logger.info(f"[Retrain] OK - {len(df)} jogos")
+            else:
+                logger.warning("[Retrain] Dados insuficientes")
         except Exception as e:
-            logger.error(f"daily_retrain FALHOU: {e}")
+            logger.error(f"[Retrain] Erro: {e}")
 
 
 def _daily_summary_task(app):
@@ -385,164 +376,81 @@ def _daily_summary_task(app):
             from app.alerts.telegram_bot import send_message
 
             today = date.today()
-            today_start = datetime.combine(today, datetime.min.time())
-            bets = Bet.query.filter(Bet.timestamp >= today_start).all()
-            wins = [bet for bet in bets if bet.result == 'won']
-            losses = [bet for bet in bets if bet.result == 'lost']
-            pnl = sum((bet.profit_loss or 0.0) for bet in bets)
-
+            bets = Bet.query.filter(
+                Bet.timestamp >= datetime.combine(today, datetime.min.time())
+            ).all()
+            wins = [b for b in bets if b.result == 'won']
+            losses = [b for b in bets if b.result == 'lost']
+            pnl = sum((b.profit_loss or 0.0) for b in bets)
             delivered = send_message(
-                f"📋 <b>Resumo Diário — EdgeHunter</b>\n\n"
+                f"📋 <b>Resumo Diário - EdgeHunter</b>\n\n"
                 f"📅 {today.strftime('%d/%m/%Y')}\n"
                 f"🎯 Surebets: {len(bets)}\n"
                 f"✅ Ganhos: {len(wins)}\n"
                 f"❌ Perdas: {len(losses)}\n"
-                f"💰 P&amp;L: R$ {pnl:.2f}\n"
+                f"💰 P&amp;L: R$ {pnl:.2f}"
             )
 
-            if delivered:
-                logger.info(
-                    f"daily_summary OK: {len(bets)} apostas | "
-                    f"{len(wins)} ganhos | {len(losses)} perdas | "
-                    f"P&L R$ {pnl:.2f}."
-                )
-            else:
-                logger.error("daily_summary FALHOU: Telegram não respondeu.")
+            if not delivered:
+                logger.error("[Summary] Erro: Telegram não respondeu")
         except Exception as e:
-            logger.error(f"daily_summary FALHOU: {e}")
+            logger.error(f"[Summary] Erro: {e}")
 
 
 def _update_metrics_task(app):
     """Atualizar métricas."""
     with app.app_context():
         try:
-            from flask import current_app
             from app import db
-            from app.engine.calibration import brier_score
-            from app.models import Bet, Game, ModelVersion, Performance, Prediction
+            from app.models import Game, Prediction
+            from app.engine.ensemble import _get_global_ensemble
 
-            completed_predictions = (
-                Prediction.query
+            cutoff = datetime.utcnow() - timedelta(days=30)
+            preds = (
+                db.session.query(Prediction, Game)
                 .join(Game, Prediction.game_id == Game.id)
-                .filter(
-                    Game.status == 'finished',
-                    Game.home_score.isnot(None),
-                    Game.away_score.isnot(None)
-                )
+                .filter(Game.status == 'finished')
+                .filter(Prediction.created_at >= cutoff)
                 .all()
             )
 
-            if len(completed_predictions) < 10:
-                logger.info("Métricas: aguardando dados")
+            if len(preds) < 10:
+                logger.info("[Metrics] Aguardando mais dados")
                 return
 
-            prediction_scores = []
-            scores_by_model = {}
-            updated_predictions = 0
+            model_brier = {}
+            model_columns = {
+                'dixon_coles': ('dixon_coles_home', 'dixon_coles_draw', 'dixon_coles_away'),
+                'elo': ('elo_home', 'elo_draw', 'elo_away'),
+                'xgboost': ('xgboost_home', 'xgboost_draw', 'xgboost_away'),
+                'bayesian': ('bayesian_home', 'bayesian_draw', 'bayesian_away'),
+            }
 
-            for prediction in completed_predictions:
-                game = prediction.game
-                actual = np.array([
-                    1.0 if game.home_score > game.away_score else 0.0,
-                    1.0 if game.home_score == game.away_score else 0.0,
-                    1.0 if game.home_score < game.away_score else 0.0,
-                ])
-                probs = np.array([
-                    prediction.prob_home,
-                    prediction.prob_draw,
-                    prediction.prob_away,
-                ])
+            for model_name, columns in model_columns.items():
+                scores = []
+                for pred, game in preds:
+                    hs, as_ = game.home_score, game.away_score
+                    if hs is None or as_ is None:
+                        continue
 
-                score = (
-                    brier_score(actual[[0]], probs[[0]]) +
-                    brier_score(actual[[1]], probs[[1]]) +
-                    brier_score(actual[[2]], probs[[2]])
-                ) / 3
+                    true = (1, 0, 0) if hs > as_ else ((0, 1, 0) if hs == as_ else (0, 0, 1))
+                    probs = [getattr(pred, col, None) for col in columns]
+                    if any(p is None for p in probs):
+                        continue
 
-                if prediction.brier_score != score:
-                    prediction.brier_score = score
-                    updated_predictions += 1
+                    bs = sum((float(probs[i]) - true[i]) ** 2 for i in range(3)) / 3
+                    scores.append(bs)
 
-                prediction_scores.append(score)
-                if prediction.model_version_id:
-                    scores_by_model.setdefault(prediction.model_version_id, []).append(score)
+                if scores:
+                    model_brier[model_name] = float(np.mean(scores))
 
-            active_model = ModelVersion.query.filter_by(is_active=True).first()
-            if active_model is None:
-                db.session.commit()
-                logger.info(
-                    f"update_metrics OK: {len(prediction_scores)} predições avaliadas | "
-                    f"Brier médio {float(np.mean(prediction_scores)):.4f} | "
-                    "sem modelo ativo para persistir métricas agregadas."
-                )
-                return
-
-            today = date.today()
-            rolling_window_days = current_app.config.get('ROLLING_WINDOW_DAYS', 30)
-            rolling_cutoff = datetime.utcnow() - timedelta(days=rolling_window_days)
-
-            settled_bets = Bet.query.filter(
-                Bet.timestamp >= datetime.combine(today, datetime.min.time()),
-                Bet.result.in_(['won', 'lost'])
-            ).all()
-            rolling_bets = Bet.query.filter(
-                Bet.timestamp >= rolling_cutoff,
-                Bet.result.in_(['won', 'lost'])
-            ).all()
-
-            profits_today = [bet.profit_loss for bet in settled_bets if bet.profit_loss is not None]
-            stakes_today = [bet.stake for bet in settled_bets]
-            clv_today = [bet.clv for bet in settled_bets if bet.clv is not None]
-
-            rolling_rois = [bet.roi for bet in rolling_bets if bet.roi is not None]
-            rolling_profits = [bet.profit_loss for bet in rolling_bets if bet.profit_loss is not None]
-            rolling_clv = [bet.clv for bet in rolling_bets if bet.clv is not None]
-            rolling_stake = sum(bet.stake for bet in rolling_bets)
-
-            roi_today = (sum(profits_today) / sum(stakes_today) * 100) if stakes_today else 0.0
-            roi_30d = (sum(rolling_profits) / rolling_stake * 100) if rolling_stake > 0 else 0.0
-            sharpe_30d = 0.0
-            if len(rolling_rois) > 1 and np.std(rolling_rois) > 0:
-                sharpe_30d = float(np.mean(rolling_rois) / np.std(rolling_rois))
-
-            active_brier_scores = scores_by_model.get(active_model.id, prediction_scores)
-            active_brier = float(np.mean(active_brier_scores)) if active_brier_scores else None
-            clv_avg_30d = float(np.mean(rolling_clv)) if rolling_clv else 0.0
-
-            active_model.brier_score = active_brier
-            active_model.roi_30d = roi_30d
-            active_model.clv_avg = clv_avg_30d
-            active_model.sharpe_ratio = sharpe_30d
-            active_model.total_bets = len(rolling_bets)
-
-            daily_perf = Performance.query.filter_by(
-                model_version_id=active_model.id,
-                date=today
-            ).first()
-            if daily_perf is None:
-                daily_perf = Performance(model_version_id=active_model.id, date=today)
-                db.session.add(daily_perf)
-
-            daily_perf.bets_count = len(settled_bets)
-            daily_perf.wins = sum(1 for bet in settled_bets if bet.result == 'won')
-            daily_perf.losses = sum(1 for bet in settled_bets if bet.result == 'lost')
-            daily_perf.profit_loss = float(sum(profits_today)) if profits_today else 0.0
-            daily_perf.roi = float(roi_today)
-            daily_perf.brier_score = active_brier
-            daily_perf.clv_avg = float(np.mean(clv_today)) if clv_today else 0.0
-            daily_perf.sharpe_30d = sharpe_30d
-            daily_perf.roi_30d = roi_30d
-
-            db.session.commit()
-            logger.info(
-                "update_metrics OK: "
-                f"{len(prediction_scores)} predições avaliadas | "
-                f"{updated_predictions} atualizadas | "
-                f"Brier médio {float(np.mean(prediction_scores)):.4f} | "
-                f"ROI {rolling_window_days}d {roi_30d:+.2f}%."
-            )
+            if model_brier:
+                ensemble = _get_global_ensemble()
+                if ensemble:
+                    ensemble.ensemble.update_weights_from_brier(model_brier)
+                    logger.info(f"[Metrics] Brier: {json.dumps(model_brier, ensure_ascii=False)}")
         except Exception as e:
-            logger.error(f"update_metrics FALHOU: {e}")
+            logger.error(f"[Metrics] Erro: {e}")
 
 
 def _heartbeat_task(app):
@@ -569,8 +477,8 @@ def _heartbeat_task(app):
             )
 
             if result:
-                logger.info("💓 Heartbeat enviado com sucesso!")
+                logger.info("💓 Heartbeat enviado")
             else:
-                logger.error("💓 Heartbeat FALHOU: Telegram não respondeu")
+                logger.error("💓 Heartbeat FALHOU")
         except Exception as e:
             logger.error(f"💓 Heartbeat erro: {e}")

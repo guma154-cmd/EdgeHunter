@@ -31,59 +31,80 @@ class SurebetDetector:
         """
         Analisa um jogo e retorna oportunidades de surebet.
         """
+        sport = game_data.get('sport', 'football')
+        if sport == 'tennis':
+            return self._detect_2way(game_data)
+        else:
+            return self._detect_3way(game_data)
+
+    def _detect_2way(self, game_data: dict) -> list:
+        """Arbitragem em mercado de 2 resultados (ex: Tênis)."""
         opportunities = []
         home = game_data.get('home_team', 'Unknown')
         away = game_data.get('away_team', 'Unknown')
-        
         all_odds = game_data.get('all_odds', {})
         bookmakers = list(all_odds.keys())
 
         if len(bookmakers) < 2:
             return []
 
-        logger.debug(f"Analisando: {home} vs {away} | Casas: {bookmakers}")
-
-        # 1. DETECÇÃO 2-WAY (Home/Away ou Over/Under se disponível)
-        # (Lógica simplificada para Home/Away)
         for i, book_A in enumerate(bookmakers):
             for book_B in bookmakers:
                 if book_A == book_B: continue
                 
-                odds_A = all_odds[book_A]
-                odds_B = all_odds[book_B]
+                # Testar Home (A) vs Away (B)
+                oa = all_odds[book_A].get('home') or all_odds[book_A].get('1')
+                ob = all_odds[book_B].get('away') or all_odds[book_B].get('2')
                 
-                # Mapear chaves (podem vir como '1', '2' ou 'home', 'away')
-                oa = odds_A.get('1') or odds_A.get('home')
-                ob = odds_B.get('2') or odds_B.get('away')
-                
-                if not oa or not ob: continue
-                
-                # Ajuste Betfair
-                eff_oa = 1 + (oa - 1) * (1 - self.betfair_commission) if book_A == 'betfair' else oa
-                eff_ob = 1 + (ob - 1) * (1 - self.betfair_commission) if book_B == 'betfair' else ob
-                
-                arb = (1/eff_oa) + (1/eff_ob)
-                if arb < 1.0:
-                    self._process_opp(opportunities, game_data, [book_A, book_B], [eff_oa, eff_ob], ['1', '2'], arb)
+                if oa and ob and oa > 1 and ob > 1:
+                    e_oa = 1 + (oa - 1) * (1 - self.betfair_commission) if book_A == 'betfair' else oa
+                    e_ob = 1 + (ob - 1) * (1 - self.betfair_commission) if book_B == 'betfair' else ob
+                    
+                    arb = (1/e_oa) + (1/e_ob)
+                    if arb < 1.0:
+                        self._process_opp(opportunities, game_data, [book_A, book_B], [e_oa, e_ob], ['home', 'away'], arb)
+
+        opportunities.sort(key=lambda x: x['profit_pct'], reverse=True)
+        return opportunities
+
+    def _detect_3way(self, game_data: dict) -> list:
+        """Arbitragem em mercado de 3 resultados (Futebol)."""
+        opportunities = []
+        home = game_data.get('home_team', 'Unknown')
+        away = game_data.get('away_team', 'Unknown')
+        all_odds = game_data.get('all_odds', {})
+        bookmakers = list(all_odds.keys())
+
+        if len(bookmakers) < 2: return []
+
+        # 1. Tentar 2-way no futebol (DNB ou Home/Away se disponível)
+        for i, book_A in enumerate(bookmakers):
+            for book_B in bookmakers:
+                if book_A == book_B: continue
+                oa = all_odds[book_A].get('home') or all_odds[book_A].get('1')
+                ob = all_odds[book_B].get('away') or all_odds[book_B].get('2')
+                if oa and ob and oa > 1 and ob > 1:
+                    e_oa = 1 + (oa - 1) * (1 - self.betfair_commission) if book_A == 'betfair' else oa
+                    e_ob = 1 + (ob - 1) * (1 - self.betfair_commission) if book_B == 'betfair' else ob
+                    arb = (1/e_oa) + (1/e_ob)
+                    if arb < 1.0:
+                        self._process_opp(opportunities, game_data, [book_A, book_B], [e_oa, e_ob], ['home', 'away'], arb)
 
         # 2. DETECÇÃO 3-WAY (1X2)
-        for i, book_1 in enumerate(bookmakers):
+        for book_1 in bookmakers:
             for book_X in bookmakers:
                 for book_2 in bookmakers:
-                    # Odds para 1, X e 2
                     o1 = all_odds[book_1].get('1') or all_odds[book_1].get('home')
                     oX = all_odds[book_X].get('X') or all_odds[book_X].get('draw')
                     o2 = all_odds[book_2].get('2') or all_odds[book_2].get('away')
                     
                     if not o1 or not oX or not o2: continue
                     
-                    # Ajustes Betfair
                     e1 = 1 + (o1 - 1) * (1 - self.betfair_commission) if book_1 == 'betfair' else o1
                     eX = 1 + (oX - 1) * (1 - self.betfair_commission) if book_X == 'betfair' else oX
                     e2 = 1 + (o2 - 1) * (1 - self.betfair_commission) if book_2 == 'betfair' else o2
                     
                     arb = (1/e1) + (1/eX) + (1/e2)
-                    
                     if arb < 1.0:
                         profit = (1 - arb) * 100
                         if self.min_profit_pct <= profit <= self.max_profit_pct:

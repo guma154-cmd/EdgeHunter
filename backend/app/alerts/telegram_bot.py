@@ -296,14 +296,24 @@ def send_surebet_alert(opp: dict):
     detected_at = datetime.now(brt)
     expires_at = detected_at + timedelta(seconds=90)
 
+    # Detectar esporte e emoji
+    sport = opp.get('sport', 'football')
+    sport_emoji = '🎾' if sport == 'tennis' else '⚽'
+
+    # Para tênis: outcome é nome do jogador, não Home/Away
+    if sport == 'tennis':
+        label_A = opp['home_team'] if opp['outcome_A'] == 'home' else opp['away_team']
+        label_B = opp['home_team'] if opp['outcome_B'] == 'home' else opp['away_team']
+    else:
+        label_A = opp['outcome_A'].upper()
+        label_B = opp['outcome_B'].upper()
+
     home_q = opp['home_team'].replace(' ', '+')
     away_q = opp['away_team'].replace(' ', '+')
     query  = f"{home_q}+{away_q}"
 
     def get_link(bookmaker: str) -> str:
         links = DEEP_LINKS.get(bookmaker.lower(), {})
-        # Tenta link de APP se disponível, senão WEB
-        # Para simplificar e garantir funcionamento em todos os devices, usaremos o link WEB com query
         web = links.get('web', '#').replace('{query}', query)
         return web
 
@@ -312,21 +322,21 @@ def send_surebet_alert(opp: dict):
 
     msg = (
         f"🔒 <b>SUREBET — LUCRO GARANTIDO</b>\n"
+        f"{sport_emoji} <b>{opp['home_team']}</b> vs <b>{opp['away_team']}</b>\n"
         f"⏰ <b>EXECUTE EM ATÉ 90 SEGUNDOS</b>\n"
         f"🕐 Detectado: {detected_at.strftime('%H:%M:%S')} BRT\n"
         f"⚠️ Expira: {expires_at.strftime('%H:%M:%S')} BRT\n\n"
-        f"🏟 <code>{opp['home_team']}</code> vs <code>{opp['away_team']}</code>\n"
         f"🏆 {opp['league']}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"APOSTA 1️⃣\n"
         f"🏦 <b>{opp['bookmaker_A'].upper()}</b>\n"
-        f"📌 {opp['outcome_A'].upper()}\n"
+        f"📌 {label_A}\n"
         f"💰 Odd: <code>{opp['odds_A_raw'] if 'odds_A_raw' in opp else opp['odds_A']}</code>\n"
         f"💵 Stake: <b>R$ {opp['stake_A']}</b>\n"
         f"🔗 <a href='{link_A}'>Abrir {opp['bookmaker_A'].upper()}</a>\n\n"
         f"APOSTA 2️⃣\n"
         f"🏦 <b>{opp['bookmaker_B'].upper()}</b>\n"
-        f"📌 {opp['outcome_B'].upper()}\n"
+        f"📌 {label_B}\n"
         f"💰 Odd: <code>{opp['odds_B_raw'] if 'odds_B_raw' in opp else opp['odds_B']}</code>\n"
         f"💵 Stake: <b>R$ {opp['stake_B']}</b>\n"
         f"🔗 <a href='{link_B}'>Abrir {opp['bookmaker_B'].upper()}</a>\n\n"

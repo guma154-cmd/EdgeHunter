@@ -67,13 +67,11 @@ async def scrape_pinnacle(league_ids=[1980, 1456, 2627]) -> list:
                     
                     odds = {}
                     for p in prices:
-                        # Em markets/straight, o campo costuma ser 'designation' ou 'alignment'
-                        # No debug anterior de Matchup era alignment, vamos testar designation aqui 
-                        # ou usar a posição se necessário.
                         desig = p.get('designation') or p.get('alignment')
-                        if desig == 'home': odds['1'] = p['price']
-                        elif desig == 'away': odds['2'] = p['price']
-                        elif desig == 'draw': odds['X'] = p['price']
+                        price_dec = american_to_decimal(p['price'])
+                        if desig == 'home': odds['1'] = price_dec
+                        elif desig == 'away': odds['2'] = price_dec
+                        elif desig == 'draw': odds['X'] = price_dec
                     
                     if odds:
                         results.append({
@@ -165,41 +163,56 @@ async def scrape_bet365() -> list:
         logger.error(f"Erro Bet365: {e}")
     return results
 
+def american_to_decimal(amm):
+    if amm > 0:
+        return (amm / 100) + 1
+    else:
+        return (100 / abs(amm)) + 1
+
 # --- MAIN ---
 async def fetch_all_direct() -> list:
     """Coleta odds das 3 casas em paralelo e faz o matching."""
     logger.info("Iniciando coleta direta...")
     
+    from app.data.oddsportal_scraper import fetch_games_sync
+    import asyncio
+    
     # Rodar scrapers em paralelo
     tasks = [
         scrape_pinnacle(),
         scrape_betano(),
-        # scrape_bet365() # Opcional: Desativado por enquanto se for muito instável
+        asyncio.to_thread(fetch_games_sync) # OddsPortal como fallback de overlap
     ]
     
     scraped_data = await asyncio.gather(*tasks, return_exceptions=True)
     
     pinnacle_games = scraped_data[0] if not isinstance(scraped_data[0], Exception) else []
     betano_games = scraped_data[1] if not isinstance(scraped_data[1], Exception) else []
+    oddsportal_games = scraped_data[2] if not isinstance(scraped_data[2], Exception) else []
     
-    # Consolidar
+    # Consolidar todas as fontes
+    all_sources = [pinnacle_games, betano_games, oddsportal_games]
     combined = []
+    
+    # Usar Pinnacle como base e buscar matches nas outras
     for p_game in pinnacle_games:
-        match = find_matching_game(p_game, betano_games)
-        if match:
-            # Fundir odds
-            p_game['all_odds'].update(match['all_odds'])
-            combined.append(p_game)
-        else:
-            # Se não tem match, podemos adicionar apenas uma casa (menos útil para surebets diretas)
-            combined.append(p_game)
+        # Match com Betano
+        m_betano = find_matching_game(p_game, betano_games)
+        if m_betano: p_game['all_odds'].update(m_betano['all_odds'])
+        
+        # Match com OddsPortal
+        m_op = find_matching_game(p_game, oddsportal_games)
+        if m_op: p_game['all_odds'].update(m_op['all_odds'])
+        
+        combined.append(p_game)
             
-    # Adicionar jogos da Betano que não deram match com Pinnacle
-    for b_game in betano_games:
-        if not find_matching_game(b_game, pinnacle_games):
-            combined.append(b_game)
+    # Adicionar jogos das outras fontes que não estão na Pinnacle
+    for other_list in [betano_games, oddsportal_games]:
+        for g in other_list:
+            if not find_matching_game(g, combined):
+                combined.append(g)
             
-    logger.info(f"Coleta direta finalizada: {len(combined)} jogos consolidados.")
+    logger.info(f"Coleta consolidada finalizada: {len(combined)} jogos.")
     return combined
 
 def fetch_direct_sync() -> list:

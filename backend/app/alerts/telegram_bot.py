@@ -42,19 +42,28 @@ def format_confidence_bar(confidence: float) -> str:
     filled = int(confidence / 10)
     return '█' * filled + '░' * (10 - filled)
 
-# CORREÇÃO 3 — Deep links para as casas
-DEEPLINKS = {
-    'bet365':  'https://www.bet365.com/#/AS/B1/',
-    'betano':  'https://www.betano.com/sport/futebol/',
-    'betfair': 'https://www.betfair.com/exchange/plus/football',
-    'pinnacle': 'https://www.pinnacle.com/pt/football/matchups'
-}
-
-SEARCH_LINKS = {
-    'bet365': 'https://www.bet365.com.br/#/AC/B1/C1/D8/',
-    'betano': 'https://www.betano.com/search/?q=',
-    'pinnacle': 'https://www.pinnacle.com/pt/football/matchups/',
-    'betfair': 'https://www.betfair.com/exchange/plus/football',
+# Deep links para abrir APPs ou busca direta
+DEEP_LINKS = {
+    'bet365': {
+        'app':  'bet365://launch?sport=soccer',
+        'web':  'https://www.bet365.com.br/#/AC/B1/C1/D8/'
+    },
+    'betano': {
+        'app':  'betano://search?query={query}',
+        'web':  'https://www.betano.com/search/?q={query}'
+    },
+    'pinnacle': {
+        'app':  'https://www.pinnacle.com/pt/football/matchups/',
+        'web':  'https://www.pinnacle.com/pt/football/matchups/'
+    },
+    'superbet': {
+        'app':  'https://superbet.com.br/apostas-esportivas/futebol',
+        'web':  'https://superbet.com.br/apostas-esportivas/futebol'
+    },
+    'betfair': {
+        'app':  'https://www.betfair.com/exchange/plus/football',
+        'web':  'https://www.betfair.com/exchange/plus/football'
+    }
 }
 
 class TelegramBot:
@@ -287,26 +296,26 @@ def send_surebet_alert(opp: dict):
     detected_at = datetime.now(brt)
     expires_at = detected_at + timedelta(seconds=90)
 
-    # CORREÇÃO 3 — Obter deep links
-    link_A = DEEPLINKS.get(opp['bookmaker_A'].lower(), '#')
-    link_B = DEEPLINKS.get(opp['bookmaker_B'].lower(), '#')
-    home = opp['home_team'].replace(' ', '+')
-    away = opp['away_team'].replace(' ', '+')
-    query = f"{home}+{away}"
+    home_q = opp['home_team'].replace(' ', '+')
+    away_q = opp['away_team'].replace(' ', '+')
+    query  = f"{home_q}+{away_q}"
 
-    search_link_A = SEARCH_LINKS.get(opp['bookmaker_A'].lower(), '#')
-    search_link_B = SEARCH_LINKS.get(opp['bookmaker_B'].lower(), '#')
+    def get_link(bookmaker: str) -> str:
+        links = DEEP_LINKS.get(bookmaker.lower(), {})
+        # Tenta link de APP se disponível, senão WEB
+        # Para simplificar e garantir funcionamento em todos os devices, usaremos o link WEB com query
+        web = links.get('web', '#').replace('{query}', query)
+        return web
 
-    if opp['bookmaker_A'].lower() == 'betano':
-        search_link_A += query
-    if opp['bookmaker_B'].lower() == 'betano':
-        search_link_B += query
+    link_A = get_link(opp['bookmaker_A'])
+    link_B = get_link(opp['bookmaker_B'])
 
     msg = (
         f"🔒 <b>SUREBET — LUCRO GARANTIDO</b>\n"
         f"⏰ <b>EXECUTE EM ATÉ 90 SEGUNDOS</b>\n"
         f"🕐 Detectado: {detected_at.strftime('%H:%M:%S')} BRT\n"
-        f"⚠️ Expira: {expires_at.strftime('%H:%M:%S')} BRT\n\n"        f"🏟 <code>{opp['home_team']}</code> vs <code>{opp['away_team']}</code>\n"
+        f"⚠️ Expira: {expires_at.strftime('%H:%M:%S')} BRT\n\n"
+        f"🏟 <code>{opp['home_team']}</code> vs <code>{opp['away_team']}</code>\n"
         f"🏆 {opp['league']}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"APOSTA 1️⃣\n"
@@ -314,15 +323,13 @@ def send_surebet_alert(opp: dict):
         f"📌 {opp['outcome_A'].upper()}\n"
         f"💰 Odd: <code>{opp['odds_A_raw'] if 'odds_A_raw' in opp else opp['odds_A']}</code>\n"
         f"💵 Stake: <b>R$ {opp['stake_A']}</b>\n"
-        f"🔗 <a href='{link_A}'>Abrir {opp['bookmaker_A'].upper()}</a>\n"
-        f"🔎 <a href='{search_link_A}'>Buscar {opp['home_team']} vs {opp['away_team']}</a>\n\n"
+        f"🔗 <a href='{link_A}'>Abrir {opp['bookmaker_A'].upper()}</a>\n\n"
         f"APOSTA 2️⃣\n"
         f"🏦 <b>{opp['bookmaker_B'].upper()}</b>\n"
         f"📌 {opp['outcome_B'].upper()}\n"
         f"💰 Odd: <code>{opp['odds_B_raw'] if 'odds_B_raw' in opp else opp['odds_B']}</code>\n"
         f"💵 Stake: <b>R$ {opp['stake_B']}</b>\n"
-        f"🔗 <a href='{link_B}'>Abrir {opp['bookmaker_B'].upper()}</a>\n"
-        f"🔎 <a href='{search_link_B}'>Buscar {opp['home_team']} vs {opp['away_team']}</a>\n\n"
+        f"🔗 <a href='{link_B}'>Abrir {opp['bookmaker_B'].upper()}</a>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"💼 Stake total: <code>R$ {opp['total_stake']}</code>\n"
         f"✅ Lucro líquido: <b>R$ {opp['guaranteed_profit']}</b>\n"

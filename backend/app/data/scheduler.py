@@ -160,18 +160,24 @@ def _fetch_odds_task(app):
             if not games and app.config.get('ODDS_API_KEY'):
                 from app.data.odds_api import OddsAPIClient
                 api_games = OddsAPIClient(app.config['ODDS_API_KEY']).fetch_all_value_games()
-                games = [
-                    {
-                        'home_team': g['home_team'],
-                        'away_team': g['away_team'],
-                        'league': g['league'],
-                        'match_date': g['match_date'],
-                        'source': 'odds_api',
-                        'all_odds': g.get('soft_odds', {}),
-                    }
-                    for g in api_games
-                    if len(g.get('soft_odds', {})) >= 2
-                ]
+                games = []
+                for g in api_games:
+                    all_odds = g.get('soft_odds', {})
+                    if g.get('pinnacle_home'):
+                        p_odds = {'home': g['pinnacle_home'], 'away': g['pinnacle_away']}
+                        if g.get('pinnacle_draw'): p_odds['draw'] = g['pinnacle_draw']
+                        all_odds['pinnacle'] = p_odds
+                    
+                    if len(all_odds) >= 2:
+                        games.append({
+                            'home_team': g['home_team'],
+                            'away_team': g['away_team'],
+                            'league': g['league'],
+                            'match_date': g['match_date'],
+                            'source': 'odds_api',
+                            'sport': 'tennis' if 'tennis' in g['league'].lower() or 'atp' in g['league'].lower() or 'wta' in g['league'].lower() else 'football',
+                            'all_odds': all_odds,
+                        })
                 if games:
                     source = 'odds_api'
                     logger.info(f"[Odds] The Odds API: {len(games)} jogos")

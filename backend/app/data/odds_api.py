@@ -22,6 +22,10 @@ SPORTS_MAP = {
     'soccer_brazil_campeonato': 'Brasileirão',
     'soccer_portugal_primeira_liga': 'Primeira Liga',
     'soccer_netherlands_eredivisie': 'Eredivisie',
+    'tennis_atp_madrid': 'ATP Madrid',
+    'tennis_wta_madrid': 'WTA Madrid',
+    'tennis_atp_savannah_challenger': 'ATP Savannah',
+    'tennis_wta_oeiras': 'WTA Oeiras',
 }
 
 

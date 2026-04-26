@@ -29,6 +29,27 @@ DEFAULT_LEAGUES = {
 TARGET_BOOKMAKERS = {'pinnacle': ['pinnacle'], 'betfair': ['betfair'], 'bet365': ['bet365'], 'betano': ['betano']}
 USER_AGENTS = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"]
 
+from datetime import datetime, timezone, timedelta
+
+def is_future_game(match_date_str: str) -> bool:
+    """Retorna True apenas se o jogo ainda não começou (ou começou há menos de 2h)."""
+    try:
+        if not match_date_str:
+            return True  # sem data → não filtrar
+        # Tentar parsear vários formatos
+        for fmt in ['%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S',
+                    '%Y-%m-%d %H:%M:%S', '%Y-%m-%d']:
+            try:
+                dt = datetime.strptime(match_date_str, fmt)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt > datetime.now(timezone.utc) - timedelta(hours=2)
+            except:
+                continue
+        return True
+    except:
+        return True
+
 class OddsPortalScraper:
     async def fetch_games_with_odds(self) -> list:
         async with async_playwright() as p:
@@ -46,13 +67,15 @@ class OddsPortalScraper:
                     for a in soup.find_all('a', href=True):
                         if "/h2h/" in a['href'] or "/vencedor/" in a['href']:
                             links.append((urljoin('https://www.oddsagora.com.br', a['href']), a.get_text()))
-                    
+
                     for m_url, m_text in links[:10]:
                         sport = 'tennis' if 'tenis' in url or 'tennis' in url else 'football'
                         await page.goto(m_url, wait_until="networkidle", timeout=30000)
                         await page.wait_for_timeout(2000)
                         m_content = await page.content(); m_soup = BeautifulSoup(m_content, 'lxml')
-                        teams = m_text.split(' vs ') if ' vs ' in m_text else ["Home", "Away"]
+                        teams = m_text.split(' vs ') if ' vs ' in m_text else []
+                        if not teams:
+                            continue
                         all_odds = {}
                         for row in m_soup.find_all(['div', 'tr']):
                             row_t = row.get_text().lower(); b_name = next((t for t, v in TARGET_BOOKMAKERS.items() if any(x in row_t for x in v)), None)
@@ -60,11 +83,16 @@ class OddsPortalScraper:
                                 odds = [float(el.get_text().replace(',', '.')) for el in row.find_all(['p', 'span']) if el.get_text().replace(',', '.').replace('.', '').isdigit()]
                                 if sport == 'tennis' and len(odds) >= 2: all_odds[b_name] = {'home': odds[0], 'away': odds[1]}
                                 elif len(odds) >= 3: all_odds[b_name] = {'home': odds[0], 'draw': odds[1], 'away': odds[2]}
-                        if all_odds: all_games.append({'home_team': teams[0], 'away_team': teams[-1], 'league': name, 'all_odds': all_odds, 'sport': sport, 'source': 'oddsportal'})
+                        if all_odds: 
+                            game_data = {'home_team': teams[0], 'away_team': teams[-1], 'league': name, 'all_odds': all_odds, 'sport': sport, 'source': 'oddsportal'}
+                            # BUG 2 — Filtro de data
+                            if is_future_game(game_data.get('match_date', '')):
+                                all_games.append(game_data)
                 except: pass
                 finally: await page.close()
             await browser.close()
             return all_games
+
 
 def fetch_games_sync() -> list:
     try: return asyncio.run(OddsPortalScraper().fetch_games_with_odds())

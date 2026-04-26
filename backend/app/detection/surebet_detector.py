@@ -130,21 +130,30 @@ class SurebetDetector:
 
         if actual_profit <= 0: return
 
+        # Mapeamento de nomes (BUG 1)
+        label_1 = outcomes[0]
+        if label_1 == '1' or label_1 == 'home': label_1 = game_data['home_team']
+        
+        label_X = outcomes[1]
+        if label_X == 'X' or label_X == 'draw': label_X = 'Empate'
+        
+        label_2 = outcomes[2]
+        if label_2 == '2' or label_2 == 'away': label_2 = game_data['away_team']
+
         opportunities.append({
             'home_team': game_data['home_team'],
             'away_team': game_data['away_team'],
             'league': game_data.get('league', 'N/A'),
             'match_date': str(game_data.get('match_date', '')),
-            'outcome_A': outcomes[0],
+            'outcome_A': label_1,
             'bookmaker_A': books[0],
             'odds_A': round(odds[0], 2),
             'stake_A': float(s1),
-            'outcome_B': outcomes[2], # Usando B para o outro lado (simplificado para o modelo atual)
+            'outcome_B': label_2,
             'bookmaker_B': books[2],
             'odds_B': round(odds[2], 2),
             'stake_B': float(s2),
-            # Incluir dados do empate se necessário ou adaptar o modelo para 3 casas
-            'extra_outcome': outcomes[1],
+            'extra_outcome': label_X,
             'extra_bookmaker': books[1],
             'extra_odds': round(odds[1], 2),
             'extra_stake': float(sX),
@@ -178,18 +187,27 @@ class SurebetDetector:
 
         if actual_profit <= 0: return
 
+        # Mapeamento de nomes (BUG 1)
+        label_A = outcomes[0]
+        if label_A == '1' or label_A == 'home': label_A = game_data['home_team']
+        elif label_A == '2' or label_A == 'away': label_A = game_data['away_team']
+        
+        label_B = outcomes[1]
+        if label_B == '1' or label_B == 'home': label_B = game_data['home_team']
+        elif label_B == '2' or label_B == 'away': label_B = game_data['away_team']
+
         opportunities.append({
             'home_team': game_data['home_team'],
             'away_team': game_data['away_team'],
             'league': game_data.get('league', 'N/A'),
             'match_date': str(game_data.get('match_date', '')),
-            'outcome_A': outcomes[0],
+            'outcome_A': label_A,
             'bookmaker_A': books[0],
             'odds_A': round(odds[0], 2),
             'stake_A': float(sA),
-            'outcome_B': outcomes[1],
+            'outcome_B': label_B,
             'bookmaker_B': books[1],
-            'odds_B': round(odds[1], 2),
+            'odds_B': round(odds[2], 2) if len(odds) > 2 else round(odds[1], 2), # Ajuste para 3-way/2-way
             'stake_B': float(sB),
             'total_stake': float(actual_total),
             'guaranteed_profit': round(float(actual_profit), 2),

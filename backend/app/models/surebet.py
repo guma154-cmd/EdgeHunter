@@ -57,6 +57,13 @@ class Surebet(db.Model):
     profit_pct = db.Column(db.Float, nullable=False)
     guaranteed_profit = db.Column(db.Float, nullable=False)
     
+    # 3rd outcome (optional, for 3-way arbs)
+    bookmaker_X = db.Column(db.String(50), nullable=True)
+    outcome_X = db.Column(db.String(20), nullable=True)
+    odds_X = db.Column(db.Float, nullable=True)
+    stake_X = db.Column(db.Float, nullable=True)
+    
     status = db.Column(db.String(20), default='pending') # pending, settled
+
     alert_sent = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

@@ -3,6 +3,7 @@ EdgeHunter — Bankroll Manager
 Rastreia saldos estimados por casa e emite alertas de banca baixa.
 """
 import logging
+import os
 
 BANKROLL_MIN_ALERT = 10.0  # alerta se banca < R$10
 
@@ -17,11 +18,13 @@ class BankrollManager:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(BankrollManager, cls).__new__(cls)
+            initial = float(os.getenv('INITIAL_BANKROLL_PER_BOOK', '50.0'))
             cls._instance.balances = {
-                'bet365':  20.0,
-                'betano':  20.0,
-                'betfair': 20.0,
-                'pinnacle': 20.0
+                'bet365':  initial,
+                'betano':  initial,
+                'betfair': initial,
+                'pinnacle': initial,
+                'superbet': initial
             }
         return cls._instance
     
@@ -30,18 +33,27 @@ class BankrollManager:
         Atualiza saldo após aposta (amount negativo)
         ou liquidação (amount positivo).
         """
+        if not bookmaker: return
         book = bookmaker.lower()
         if book in self.balances:
             self.balances[book] += amount
             self._check_low_balance(book)
+        else:
+            # Se a casa não existe no dict, inicializa ela
+            initial = float(os.getenv('INITIAL_BANKROLL_PER_BOOK', '50.0'))
+            self.balances[book] = initial + amount
     
-    def can_cover(self, bookmaker_A: str, stake_A: float,
-                  bookmaker_B: str, stake_B: float) -> bool:
-        """Verifica se tem saldo para cobrir os dois lados."""
-        return (
-            self.balances.get(bookmaker_A.lower(), 0) >= stake_A and
-            self.balances.get(bookmaker_B.lower(), 0) >= stake_B
+    def can_cover(self, book_A: str, stake_A: float,
+                  book_B: str, stake_B: float,
+                  book_X: str = None, stake_X: float = 0.0) -> bool:
+        """Verifica se tem saldo para cobrir todos os lados (2 ou 3)."""
+        ok = (
+            self.balances.get(book_A.lower(), 0) >= stake_A and
+            self.balances.get(book_B.lower(), 0) >= stake_B
         )
+        if ok and book_X:
+            ok = self.balances.get(book_X.lower(), 0) >= stake_X
+        return ok
     
     def _check_low_balance(self, bookmaker: str):
         """Alerta Telegram se saldo estiver baixo."""
@@ -65,23 +77,30 @@ class BankrollManager:
     
     def load_from_db(self, app):
         """Recalcula saldos com base nas apostas registradas."""
+        initial = float(os.getenv('INITIAL_BANKROLL_PER_BOOK', '50.0'))
         with app.app_context():
             from app.models import Surebet
             # Reset para valor inicial padrão
             for book in self.balances:
-                self.balances[book] = 20.0
+                self.balances[book] = initial
                 
-            # Buscar todas as surebets (arbitragem)
-            # Nota: Aqui simplificamos considerando apenas a redução por stake.
-            # Em um sistema real, monitoraríamos a liquidação para somar os ganhos.
             all_surebets = Surebet.query.all()
             for s in all_surebets:
-                self.balances[s.bookmaker_A.lower()] -= s.stake_A
-                self.balances[s.bookmaker_B.lower()] -= s.stake_B
+                if s.bookmaker_A.lower() in self.balances:
+                    self.balances[s.bookmaker_A.lower()] -= s.stake_A
+                if s.bookmaker_B.lower() in self.balances:
+                    self.balances[s.bookmaker_B.lower()] -= s.stake_B
+                if s.bookmaker_X and s.bookmaker_X.lower() in self.balances:
+                    self.balances[s.bookmaker_X.lower()] -= s.stake_X
                 
                 # Se estiver liquidado, somar o retorno garantido (simplificado)
                 if s.status == 'settled':
-                    # O retorno vai para um dos lados dependendo do resultado real,
-                    # mas para o "saldo total do sistema" o lucro é adicionado.
-                    # Aqui apenas deduzimos as stakes para controle de fluxo.
-                    pass
+                    # Simplificação: dividimos o lucro entre as casas para manter o saldo total
+                    # Em um sistema real, o lucro iria para a casa ganhadora.
+                    n_books = 3 if s.bookmaker_X else 2
+                    share = s.guaranteed_profit / n_books
+                    self.balances[s.bookmaker_A.lower()] += (s.stake_A + share)
+                    self.balances[s.bookmaker_B.lower()] += (s.stake_B + share)
+                    if s.bookmaker_X:
+                        self.balances[s.bookmaker_X.lower()] += (s.stake_X + share)
+

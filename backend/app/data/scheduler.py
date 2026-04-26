@@ -122,6 +122,24 @@ def _quick_confirm(opp: dict, games: list[dict]) -> bool:
     )
 
 
+def deduplicate_games(games: list) -> list:
+    """Remove jogos duplicados mantendo o que tem mais casas."""
+    seen = {}
+    for g in games:
+        key = f"{g['home_team'].lower()}_{g['away_team'].lower()}"
+        if key not in seen:
+            seen[key] = g
+        else:
+            # Manter o que tem mais casas de odds
+            existing_odds = len(seen[key].get('all_odds', {}))
+            new_odds      = len(g.get('all_odds', {}))
+            if new_odds > existing_odds:
+                seen[key] = g
+            else:
+                # Merge das odds das duas fontes
+                seen[key]['all_odds'].update(g.get('all_odds', {}))
+    return list(seen.values())
+
 def _fetch_odds_task(app):
     """Busca novas odds e detecta value bets."""
     with app.app_context():
@@ -194,6 +212,9 @@ def _fetch_odds_task(app):
                 logger.warning("[Odds] Nenhum jogo - todas as fontes falharam")
                 return
             
+            # BUG 2 — Deduplicação
+            games = deduplicate_games(games)
+            
             detector = SurebetDetector() # Usa valores do .env por padrão
             
             new_bets = 0
@@ -218,8 +239,12 @@ def _fetch_odds_task(app):
             confirmed_opportunities = []
             for opp in initial_opportunities:
                 # 1. Verificar se tem banca para cobrir
+                book_X = opp.get('extra_bookmaker')
+                stake_X = opp.get('extra_stake', 0.0)
+                
                 if not bm.can_cover(opp['bookmaker_A'], opp['stake_A'], 
-                                   opp['bookmaker_B'], opp['stake_B']):
+                                   opp['bookmaker_B'], opp['stake_B'],
+                                   book_X, stake_X):
                     logger.info(f"[Banca] Surebet ignorada: {opp['bookmaker_A']}/{opp['bookmaker_B']} (sem saldo)")
                     continue
                 
@@ -273,18 +298,29 @@ def _fetch_odds_task(app):
                         stake_B=opp['stake_B'],
                         total_stake=opp['total_stake'],
                         profit_pct=opp['profit_pct'],
-                        guaranteed_profit=opp['guaranteed_profit']
+                        guaranteed_profit=opp['guaranteed_profit'],
+                        # Suporte 3-way
+                        bookmaker_X=opp.get('extra_bookmaker'),
+                        outcome_X=opp.get('extra_outcome'),
+                        odds_X=opp.get('extra_odds'),
+                        stake_X=opp.get('extra_stake')
                     )
                     db.session.add(surebet)
                     
                     # Atualizar BankrollManager (deduzir stakes)
                     bm.update(opp['bookmaker_A'], -opp['stake_A'])
                     bm.update(opp['bookmaker_B'], -opp['stake_B'])
+                    if opp.get('extra_bookmaker'):
+                        bm.update(opp['extra_bookmaker'], -opp.get('extra_stake', 0.0))
                     
-                    # Alerta Telegram
-                    send_surebet_alert(opp)
-                    surebet.alert_sent = True
-                    new_bets += 1
+                    # Alerta Telegram (Sempre tentar enviar, mas só marcar se der certo)
+                    success = send_surebet_alert(opp)
+                    if success:
+                        surebet.alert_sent = True
+                        new_bets += 1
+                    else:
+                        logger.error(f"[Telegram] Falha ao enviar alerta para {opp['home_team']}")
+
             
             db.session.commit()
             logger.info(

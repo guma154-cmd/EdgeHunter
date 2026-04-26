@@ -51,10 +51,17 @@ async def scrape_pinnacle_tennis():
                 for m in ms:
                     mkt = m_map.get(m['id'])
                     if not mkt or not mkt.get('prices'): continue
-                    h_t = next((pa['name'] for pa in m['participants'] if pa['alignment'] == 'home'), "Home")
-                    a_t = next((pa['name'] for pa in m['participants'] if pa['alignment'] == 'away'), "Away")
+                    
+                    participants = m.get('participants', [])
+                    h_t = next((pa['name'] for pa in participants if pa['alignment'] == 'home'), None)
+                    a_t = next((pa['name'] for pa in participants if pa['alignment'] == 'away'), None)
+                    
+                    if not h_t or not a_t:
+                        continue
+                        
                     odds = {'home': american_to_decimal(next(p['price'] for p in mkt['prices'] if p.get('designation')=='home')), 'away': american_to_decimal(next(p['price'] for p in mkt['prices'] if p.get('designation')=='away'))}
                     res.append({'home_team': h_t, 'away_team': a_t, 'league': 'Tennis', 'sport': 'tennis', 'all_odds': {'pinnacle': odds}})
+
             except: pass
     return res
 
@@ -85,13 +92,53 @@ async def scrape_betano_tennis():
     except: pass
     return res
 
+from datetime import datetime, timezone, timedelta
+
+def is_future_game(match_date_str: str) -> bool:
+    """Retorna True apenas se o jogo ainda não começou (ou começou há menos de 2h)."""
+    try:
+        if not match_date_str:
+            return True  # sem data → não filtrar
+        # Tentar parsear vários formatos
+        for fmt in ['%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%dT%H:%M:%S',
+                    '%Y-%m-%d %H:%M:%S', '%Y-%m-%d']:
+            try:
+                dt = datetime.strptime(match_date_str, fmt)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt > datetime.now(timezone.utc) - timedelta(hours=2)
+            except:
+                continue
+        return True
+    except:
+        return True
+
 async def fetch_all_direct():
     from app.data.oddsportal_scraper import fetch_games_sync
     tasks = [scrape_pinnacle_tennis(), scrape_betano_tennis(), asyncio.to_thread(fetch_games_sync)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     all_g = []
     for r in results:
-        if isinstance(r, list): all_g.extend(r)
+        if isinstance(r, list):
+            for game in r:
+                # BUG 1 — Validação de nomes
+                h_t = game.get('home_team')
+                a_t = game.get('away_team')
+                
+                if not h_t or not a_t:
+                    logger.warning(f"[Scraper] Jogo sem nomes descartado: {game}")
+                    continue
+                
+                if str(h_t).lower() in ['home','away','1','2',''] or str(a_t).lower() in ['home','away','1','2','']:
+                    logger.warning(f"[Scraper] Nome inválido descartado: {h_t} vs {a_t}")
+                    continue
+                
+                # BUG 2 — Filtro de data (Jogos futuros)
+                if is_future_game(game.get('match_date', '')):
+                    all_g.append(game)
+                else:
+                    logger.info(f"[Scraper] Jogo antigo ignorado: {h_t} vs {a_t} ({game.get('match_date')})")
+
     fb = [g for g in all_g if g.get('sport') != 'tennis']
     tn = [g for g in all_g if g.get('sport') == 'tennis']
     return match_games_between_sources(fb) + match_games_between_sources(tn)

@@ -289,9 +289,11 @@ def send_heartbeat(scheduler_jobs: list, ai_active: bool, surebets_today: int,
     return send_message(msg)
 
 
-def send_surebet_alert(opp: dict):
+def send_surebet_alert(opp: dict) -> bool:
     """Envia alerta de arbitragem (surebet) formatado."""
     from datetime import datetime, timedelta, timezone
+    import html
+    
     brt = timezone(timedelta(hours=-3))
     detected_at = datetime.now(brt)
     expires_at = detected_at + timedelta(seconds=90)
@@ -300,10 +302,15 @@ def send_surebet_alert(opp: dict):
     sport = opp.get('sport', 'football')
     sport_emoji = '🎾' if sport == 'tennis' else '⚽'
 
+    # Escapar nomes de times e liga para evitar erro de HTML no Telegram
+    home_team = html.escape(opp['home_team'])
+    away_team = html.escape(opp['away_team'])
+    league = html.escape(opp.get('league', 'N/A'))
+
     # Para tênis: outcome é nome do jogador, não Home/Away
     if sport == 'tennis':
-        label_A = opp['home_team'] if opp['outcome_A'] == 'home' else opp['away_team']
-        label_B = opp['home_team'] if opp['outcome_B'] == 'home' else opp['away_team']
+        label_A = home_team if opp['outcome_A'] == 'home' else away_team
+        label_B = home_team if opp['outcome_B'] == 'home' else away_team
     else:
         label_A = opp['outcome_A'].upper()
         label_B = opp['outcome_B'].upper()
@@ -312,38 +319,97 @@ def send_surebet_alert(opp: dict):
     away_q = opp['away_team'].replace(' ', '+')
     query  = f"{home_q}+{away_q}"
 
-    def get_link(bookmaker: str) -> str:
-        links = DEEP_LINKS.get(bookmaker.lower(), {})
-        web = links.get('web', '#').replace('{query}', query)
-        return web
+    def get_link(bookmaker: str, home: str, away: str) -> str:
+        home_enc = home.replace(' ', '+')
+        away_enc = away.replace(' ', '+')
+        query    = f"{home_enc}+{away_enc}"
+        
+        if bookmaker.lower() == 'bet365':
+            return None # sem link — instrução no texto
+            
+        links = {
+            'betano':   f"https://www.betano.com/search/?q={query}",
+            'pinnacle': f"https://www.pinnacle.com/pt/football/matchups/",
+            'betfair':  f"https://www.betfair.com/exchange/plus/football",
+            'superbet': f"https://superbet.com.br/apostas-esportivas/futebol",
+        }
+        return links.get(bookmaker.lower(), '#')
 
-    link_A = get_link(opp['bookmaker_A'])
-    link_B = get_link(opp['bookmaker_B'])
+    link_A = get_link(opp['bookmaker_A'], opp['home_team'], opp['away_team'])
+    link_B = get_link(opp['bookmaker_B'], opp['home_team'], opp['away_team'])
+
+    # Formatação APOSTA 1
+    if link_A:
+        aposta_1 = (
+            f"APOSTA 1️⃣\n"
+            f"🏦 <b>{opp['bookmaker_A'].upper()}</b>\n"
+            f"📌 {label_A}\n"
+            f"💰 Odd: <code>{opp['odds_A_raw'] if 'odds_A_raw' in opp else opp['odds_A']}</code>\n"
+            f"💵 Stake: <b>R$ {opp['stake_A']}</b>\n"
+            f"🔗 <a href='{link_A}'>Abrir {opp['bookmaker_A'].upper()}</a>\n\n"
+        )
+    else:
+        aposta_1 = (
+            f"APOSTA 1️⃣\n"
+            f"🏦 <b>{opp['bookmaker_A'].upper()}</b> → Buscar: <code>{home_team} x {away_team}</code>\n"
+            f"📌 {label_A} | Odd: <code>{opp['odds_A']}</code> | Stake: <b>R$ {opp['stake_A']}</b>\n\n"
+        )
+
+    # Formatação APOSTA 2
+    if link_B:
+        aposta_2 = (
+            f"APOSTA 2️⃣\n"
+            f"🏦 <b>{opp['bookmaker_B'].upper()}</b>\n"
+            f"📌 {label_B}\n"
+            f"💰 Odd: <code>{opp['odds_B_raw'] if 'odds_B_raw' in opp else opp['odds_B']}</code>\n"
+            f"💵 Stake: <b>R$ {opp['stake_B']}</b>\n"
+            f"🔗 <a href='{link_B}'>Abrir {opp['bookmaker_B'].upper()}</a>\n\n"
+        )
+    else:
+        aposta_2 = (
+            f"APOSTA 2️⃣\n"
+            f"🏦 <b>{opp['bookmaker_B'].upper()}</b> → Buscar: <code>{home_team} x {away_team}</code>\n"
+            f"📌 {label_B} | Odd: <code>{opp['odds_B']}</code> | Stake: <b>R$ {opp['stake_B']}</b>\n\n"
+        )
+
+    # Bloco para 3-way (se existir)
+    extra_block = ""
+    if 'extra_outcome' in opp and opp.get('extra_outcome'):
+        label_X = opp['extra_outcome'].upper()
+        link_X = get_link(opp['extra_bookmaker'], opp['home_team'], opp['away_team'])
+        if link_X:
+            extra_block = (
+                f"APOSTA 3️⃣\n"
+                f"🏦 <b>{opp['extra_bookmaker'].upper()}</b>\n"
+                f"📌 {label_X}\n"
+                f"💰 Odd: <code>{opp['extra_odds']}</code>\n"
+                f"💵 Stake: <b>R$ {opp['extra_stake']}</b>\n"
+                f"🔗 <a href='{link_X}'>Abrir {opp['extra_bookmaker'].upper()}</a>\n\n"
+            )
+        else:
+            extra_block = (
+                f"APOSTA 3️⃣\n"
+                f"🏦 <b>{opp['extra_bookmaker'].upper()}</b> → Buscar: <code>{home_team} x {away_team}</code>\n"
+                f"📌 {label_X} | Odd: <code>{opp['extra_odds']}</code> | Stake: <b>R$ {opp['extra_stake']}</b>\n\n"
+            )
 
     msg = (
         f"🔒 <b>SUREBET — LUCRO GARANTIDO</b>\n"
-        f"{sport_emoji} <b>{opp['home_team']}</b> vs <b>{opp['away_team']}</b>\n"
+        f"{sport_emoji} <b>{home_team}</b> vs <b>{away_team}</b>\n"
         f"⏰ <b>EXECUTE EM ATÉ 90 SEGUNDOS</b>\n"
         f"🕐 Detectado: {detected_at.strftime('%H:%M:%S')} BRT\n"
         f"⚠️ Expira: {expires_at.strftime('%H:%M:%S')} BRT\n\n"
-        f"🏆 {opp['league']}\n\n"
+        f"🏆 {league}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"APOSTA 1️⃣\n"
-        f"🏦 <b>{opp['bookmaker_A'].upper()}</b>\n"
-        f"📌 {label_A}\n"
-        f"💰 Odd: <code>{opp['odds_A_raw'] if 'odds_A_raw' in opp else opp['odds_A']}</code>\n"
-        f"💵 Stake: <b>R$ {opp['stake_A']}</b>\n"
-        f"🔗 <a href='{link_A}'>Abrir {opp['bookmaker_A'].upper()}</a>\n\n"
-        f"APOSTA 2️⃣\n"
-        f"🏦 <b>{opp['bookmaker_B'].upper()}</b>\n"
-        f"📌 {label_B}\n"
-        f"💰 Odd: <code>{opp['odds_B_raw'] if 'odds_B_raw' in opp else opp['odds_B']}</code>\n"
-        f"💵 Stake: <b>R$ {opp['stake_B']}</b>\n"
-        f"🔗 <a href='{link_B}'>Abrir {opp['bookmaker_B'].upper()}</a>\n\n"
+        f"{aposta_1}"
+        f"{aposta_2}"
+        f"{extra_block}"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"💼 Stake total: <code>R$ {opp['total_stake']}</code>\n"
         f"✅ Lucro líquido: <b>R$ {opp['guaranteed_profit']}</b>\n"
         f"📈 ROI Real: <code>{opp['profit_pct']}%</code>\n"
         f"🔒 <b>LUCRO INDEPENDENTE DO RESULTADO</b>"
     )
-    send_message(msg)
+
+    return send_message(msg)
+

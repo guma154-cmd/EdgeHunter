@@ -156,14 +156,52 @@ def _fetch_odds_task(app):
             games = []
             source = None
 
-            # 1. SCRAPERS DIRETOS (Prioridade Máxima)
-            logger.info("[Odds] Iniciando coleta direta...")
-            games = fetch_direct_sync()
-            if games:
-                source = 'direct'
-                logger.info(f"[Odds] Direto: {len(games)} jogos coletados")
+            # 1. THE ODDS API (Prioridade 1 - Se houver créditos)
+            if app.config.get('ODDS_API_KEY'):
+                from app.data.odds_api import OddsAPIClient
+                try:
+                    api_games = OddsAPIClient(app.config['ODDS_API_KEY']).fetch_all_value_games()
+                    for g in api_games:
+                        all_odds = g.get('soft_odds', {})
+                        if g.get('pinnacle_home'):
+                            p_odds = {'home': g['pinnacle_home'], 'away': g['pinnacle_away']}
+                            if g.get('pinnacle_draw'): p_odds['draw'] = g['pinnacle_draw']
+                            all_odds['pinnacle'] = p_odds
+                        
+                        if len(all_odds) >= 2:
+                            games.append({
+                                'home_team': g['home_team'],
+                                'away_team': g['away_team'],
+                                'league': g['league'],
+                                'match_date': g['match_date'],
+                                'source': 'odds_api',
+                                'sport': 'tennis' if 'tennis' in g['league'].lower() or 'atp' in g['league'].lower() or 'wta' in g['league'].lower() else 'football',
+                                'all_odds': all_odds,
+                            })
+                    if games:
+                        source = 'odds_api'
+                        logger.info(f"[Odds] The Odds API: {len(games)} jogos")
+                except Exception as e:
+                    logger.warning(f"[Odds] Falha na The Odds API: {e}")
 
-            # 2. BOLTODDS (Fallback 1)
+            # 2. PINNACLE DIRETO + BET365 SCRAPER (Paralelo)
+            if not games:
+                from app.data.direct_scrapers import fetch_direct_sync
+                from app.data.bet365_scraper import fetch_bet365_sync
+                
+                logger.info("[Odds] Iniciando coleta direta (Pinnacle + Bet365)...")
+                
+                # Rodar em threads para não travar o loop se possível, 
+                # mas como o scheduler já roda em background thread, vamos simplificar
+                games_pin = fetch_direct_sync()
+                games_b365 = fetch_bet365_sync()
+                
+                games = deduplicate_games(games_pin + games_b365)
+                if games:
+                    source = 'direct_scrapers'
+                    logger.info(f"[Odds] Direto: {len(games)} jogos coletados")
+
+            # 3. BOLTODDS (Fallback 1)
             if not games and app.config.get('BOLTODDS_API_KEY'):
                 from app.data.boltodds_client import fetch_games_boltodds
                 games = fetch_games_boltodds(
@@ -173,32 +211,6 @@ def _fetch_odds_task(app):
                 if games:
                     source = 'boltodds'
                     logger.info(f"[Odds] BoltOdds: {len(games)} jogos")
-
-            # 3. THE ODDS API (Fallback 2)
-            if not games and app.config.get('ODDS_API_KEY'):
-                from app.data.odds_api import OddsAPIClient
-                api_games = OddsAPIClient(app.config['ODDS_API_KEY']).fetch_all_value_games()
-                games = []
-                for g in api_games:
-                    all_odds = g.get('soft_odds', {})
-                    if g.get('pinnacle_home'):
-                        p_odds = {'home': g['pinnacle_home'], 'away': g['pinnacle_away']}
-                        if g.get('pinnacle_draw'): p_odds['draw'] = g['pinnacle_draw']
-                        all_odds['pinnacle'] = p_odds
-                    
-                    if len(all_odds) >= 2:
-                        games.append({
-                            'home_team': g['home_team'],
-                            'away_team': g['away_team'],
-                            'league': g['league'],
-                            'match_date': g['match_date'],
-                            'source': 'odds_api',
-                            'sport': 'tennis' if 'tennis' in g['league'].lower() or 'atp' in g['league'].lower() or 'wta' in g['league'].lower() else 'football',
-                            'all_odds': all_odds,
-                        })
-                if games:
-                    source = 'odds_api'
-                    logger.info(f"[Odds] The Odds API: {len(games)} jogos")
 
             # 4. ODDSPORTAL (Último recurso)
             if not games:

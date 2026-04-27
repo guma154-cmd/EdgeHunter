@@ -115,29 +115,30 @@ def is_future_game(match_date_str: str) -> bool:
 
 async def fetch_all_direct():
     from app.data.oddsportal_scraper import fetch_games_sync
+    # Nota: Bet365 é chamado separadamente no scheduler agora para paralelismo real
     tasks = [scrape_pinnacle_tennis(), scrape_betano_tennis(), asyncio.to_thread(fetch_games_sync)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     all_g = []
     for r in results:
+        if isinstance(r, Exception):
+            logger.error(f"[Scraper] Erro em uma das tarefas: {r}")
+            continue
         if isinstance(r, list):
             for game in r:
-                # BUG 1 — Validação de nomes
+                # Validação de nomes
                 h_t = game.get('home_team')
                 a_t = game.get('away_team')
                 
                 if not h_t or not a_t:
-                    logger.warning(f"[Scraper] Jogo sem nomes descartado: {game}")
                     continue
                 
+                # Filtro de nomes inválidos
                 if str(h_t).lower() in ['home','away','1','2',''] or str(a_t).lower() in ['home','away','1','2','']:
-                    logger.warning(f"[Scraper] Nome inválido descartado: {h_t} vs {a_t}")
                     continue
                 
-                # BUG 2 — Filtro de data (Jogos futuros)
+                # Filtro de data (Jogos futuros)
                 if is_future_game(game.get('match_date', '')):
                     all_g.append(game)
-                else:
-                    logger.info(f"[Scraper] Jogo antigo ignorado: {h_t} vs {a_t} ({game.get('match_date')})")
 
     fb = [g for g in all_g if g.get('sport') != 'tennis']
     tn = [g for g in all_g if g.get('sport') == 'tennis']

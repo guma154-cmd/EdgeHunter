@@ -1,0 +1,17 @@
+---
+description: BMAD Method Core Rules
+globs: *
+---
+# BMAD Method (Brain-Memory-Architecture-Documentation)
+
+## Core Philosophy
+1. **PRD as Source of Truth**: Todo desenvolvimento deve basear-se nos arquivos em `docs/prd/`. Não crie features sem documentação.
+2. **ADRs for Decisions**: Decisões arquiteturais críticas devem ser documentadas em `docs/adr/`.
+3. **Runbooks for Operations**: Tarefas operacionais (deploy, restore, etc) ficam em `docs/runbooks/`.
+4. **Update Documentation First**: Ao realizar mudanças no código, atualize o PRD/ADR/Runbook para refletir a mudança.
+5. **Tracking via Checkboxes**: Atualize o status das User Stories nos PRDs (`[ ]` para pendente, `[x]` para concluído).
+
+## EdgeHunter Specifics
+- O sistema usa a stack Híbrida (Core Estatístico + Gemini API).
+- Para arquivos de IA, manter restrições de free-tier em mente (custo 0).
+- Estrutura de db foca em performance concorrente (SQLite WAL).

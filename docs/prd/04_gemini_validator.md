@@ -3,9 +3,9 @@
 | Metadados | Valor |
 |---|---|
 | **ID** | PRD-04 |
-| **Status** | Rascunho |
+| **Status** | Accepted |
 | **Responsável** | John (PM) |
-| **Pai** | [PRD-00: Pivot de Value Betting](00_value_betting_pivot.md) |
+| **Pai** | [PRD-00: Pivot de Value Betting](./00_master_value_betting.md) |
 | **Criado em** | 15/05/2026 |
 
 ---
@@ -59,7 +59,7 @@ O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários d
     - O método recebe um dicionário de oportunidade (`opportunity: Dict`) do ValueDetector (PRD-03).
     - Recebe contexto adicional: `recent_accuracy` (do PoissonModel) e `recent_roi`.
     - Retorna uma estrutura de dicionário contendo:
-      ` + "`" + `` + "`" + `` + "`" + `python
+      ```python
       {
           'is_valid': bool,
           'confidence': float,  # 0.0 a 1.0
@@ -69,7 +69,7 @@ O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários d
           'tokens_used': int,
           'response_time_ms': int
       }
-      ` + "`" + `` + "`" + `` + "`" + `
+      ```
     - Registra (`logger.info`) a decisão de validação da IA.
 
 - [ ] **STORY-04-003**: Implementar `detect_anomalies()`
@@ -77,7 +77,7 @@ O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários d
   - **Critério de Aceitação**:
     - O método recebe um dicionário de métricas do sistema (ex: ROI 7d/30d, accuracy, total_bets, losing_streak, last_threshold_change).
     - Retorna um dicionário contendo:
-      ` + "`" + `` + "`" + `` + "`" + `python
+      ```python
       {
           'has_anomaly': bool,
           'anomaly_type': 'model_drift' | 'data_error' | 'logic_bug' | 'none',
@@ -86,7 +86,7 @@ O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários d
           'suggested_fix': str,
           'action_priority': int  # 1-5
       }
-      ` + "`" + `` + "`" + `` + "`" + `
+      ```
     - Dispara um alerta automático via Telegram se a `severity` for 'critical'.
 
 - [ ] **STORY-04-004**: Implementar `suggest_evolution()`
@@ -103,7 +103,7 @@ O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários d
     - Uma função utilitária `_parse_json_response(text: str) -> dict` é implementada.
     - Lida corretamente com os seguintes formatos de resposta da API Gemini:
       - JSON puro (resposta ideal).
-      - JSON encapsulado em blocos de código Markdown (ex: `` ` `` `` `json ... `` ` `` `` ` `).
+      - JSON encapsulado em blocos de código Markdown (ex: ` ```json ... ``` `).
       - JSON com vírgulas pendentes (trailing commas), que o Gemini ocasionalmente gera.
       - Respostas com texto antes ou depois do bloco JSON.
     - Em caso de JSON malformado e irrecuperável, tenta refazer a chamada à API com um prompt mais explícito.
@@ -159,7 +159,7 @@ O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários d
     - Cobertura de testes > 80% em todas as funções públicas do módulo.
     - Mocks para a API Gemini são utilizados (nenhuma chamada real é feita em testes unitários).
     - **Testes Adversariais OBRIGATÓRIOS** (devem passar):
-      ` + "`" + `` + "`" + `` + "`" + `python
+      ```python
       def test_validate_returns_safe_fallback_on_timeout():
           """Timeout do Gemini não crasha; retorna fallback dict"""
       
@@ -195,7 +195,7 @@ O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários d
       
       def test_response_truncated_handled_gracefully():
           """Gemini retorna resposta truncada (>max_tokens): não crasha"""
-      ` + "`" + `` + "`" + `` + "`" + `
+      ```
 
 ---
 
@@ -203,7 +203,7 @@ O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários d
 
 #### 5.1 Schema de Banco de Dados (4 tabelas)
 
-` + "`" + `` + "`" + `` + "`" + `sql
+```sql
 -- Validações de oportunidades
 CREATE TABLE IF NOT EXISTS gemini_validations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,11 +276,11 @@ CREATE TABLE IF NOT EXISTS gemini_token_usage (
     
     UNIQUE(month_year)
 );
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 #### 5.2 Contrato de API (classe GeminiValidator)
 
-` + "`" + `` + "`" + `` + "`" + `python
+```python
 from typing import Optional, Dict, List, Literal
 import google.generativeai as genai
 
@@ -327,7 +327,7 @@ class GeminiValidator:
     async def _call_gemini(self, prompt: str, max_tokens: int = 1000) -> str: ...
     def _track_tokens(self, input_tokens: int, output_tokens: int) -> None: ...
     def _get_cached_validation(self, opp_hash: str) -> Optional[ValidationResult]: ...
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 #### 5.3 Templates de Prompts Gemini (em PT-BR)
 
@@ -412,7 +412,7 @@ Responda APENAS com JSON válido:
 
 #### 5.4 Pseudocódigo do Graceful Degradation
 
-` + "`" + `` + "`" + `` + "`" + `python
+```python
 async def validate_opportunity(self, opp, accuracy, roi):
     # Cache check
     opp_hash = self._hash_opportunity(opp)
@@ -462,11 +462,11 @@ def _build_fallback(self, reason: str, detail: str = "") -> dict:
         'tokens_used': 0,
         'response_time_ms': 0
     }
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 #### 5.5 Configuração
 
-` + "`" + `` + "`" + `` + "`" + `python
+```python
 # Configuração padrão
 GEMINI_CONFIG = {
     'model': 'gemini-2.0-flash-exp',
@@ -483,7 +483,7 @@ GEMINI_CONFIG = {
     'monthly_token_limit': 1_600_000,  # 80% do free tier 2M
     'alert_threshold_pct': 80
 }
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 #### 5.6 Requisitos de Performance
 
@@ -522,20 +522,23 @@ GEMINI_CONFIG = {
 
 ---
 
-## 8. Questões em Aberto
+## 8. Decisions
 
-- Devemos usar Gemini Pro (não Flash) para validações críticas (EV > 10%)?
-- Implementar um fallback para a Claude API se o Gemini ficar offline por mais de 1 hora?
-- Cache de validações: 1 hora é suficiente ou estender para 3 horas?
-- Sugestões de evolução: aplicar automaticamente `risk='medium'` também?
+### 8.1 Deferred Decisions
+- Gemini Pro para validações críticas (EV > 10%): adiado; default v1 usa Gemini Flash para todas as validações.
+- Fallback para Claude API se o Gemini ficar offline por mais de 1 hora: adiado; default v1 sem fallback externo, apenas graceful degradation.
+- Cache de validações: adiado; default v1 mantém 1 hora.
+- Aplicação automática de `risk='medium'`: adiado; default v1 preserva sugestão manual e não auto-aplica.
+
+As decisões deferidas estão consolidadas em [`docs/decisions/deferred_decisions.md`](../decisions/deferred_decisions.md).
 
 ---
 
 ## 9. Referências
 
 - **Interna**:
-    - ADR-003: Estratégia híbrida (lógica + IA) — a ser criado.
-    - ADR-005: Por que Gemini Flash sobre alternativas — a ser criado.
+    - ADR-003: Estratégia híbrida (lógica + IA) — [ADR-003](../architecture/adr_003_hybrid_logic_ai.md).
+    - ADR-005: Por que Gemini Flash sobre alternativas — [ADR-005](../architecture/adr_005_llm_choice.md).
 - **Externa**:
     - Documentação da Gemini API: `https://ai.google.dev/`.
     - Limites do free tier: `https://ai.google.dev/pricing`.

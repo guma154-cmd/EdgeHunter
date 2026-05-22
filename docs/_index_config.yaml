@@ -1,0 +1,18 @@
+prds:
+  output: docs/_index/PRDS_INDEX.md
+  sources:
+    - docs/prd/00_master_value_betting.md
+    - docs/prd/01_odds_historian.md
+    - docs/prd/02_poisson_model.md
+    - docs/prd/03_value_detector.md
+    - docs/prd/04_gemini_validator.md
+    - docs/prd/05_auto_evolution.md
+
+adrs:
+  output: docs/_index/ADRS_INDEX.md
+  sources:
+    - docs/architecture/adr_001_poisson_choice.md
+    - docs/architecture/adr_002_pinnacle_benchmark.md
+    - docs/architecture/adr_003_hybrid_logic_ai.md
+    - docs/architecture/adr_004_database_choice.md
+    - docs/architecture/adr_005_llm_choice.md

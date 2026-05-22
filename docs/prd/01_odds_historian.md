@@ -2,7 +2,7 @@
 
 ## 1. Metadata
 - **ID**: PRD-01
-- **Status**: Draft
+- **Status**: Accepted
 - **Owner**: Rafael
 - **Parent**: PRD-00
 - **Created**: 2026-05-14
@@ -613,10 +613,18 @@ def _ensure_schema(self) -> None:
   - PRD-02 (PoissonModel) consome `get_finished_matches_with_last_odds()`
   - PRD-03 (ValueDetector) consome `get_snapshots(valid_only=True)`
 
-## 9. Open Questions
-- Devemos persistir snapshots inválidos (latency > 120s)? **Resposta sugerida: SIM**, para debugging mas com flag `valid_for_analysis=False`
-- Como tratar jogo cancelado/adiado? **Resposta sugerida**: status='cancelled', snapshots remain mas marcados
-- Cross-validation Pinnacle vs OddsPortal: 10% é threshold adequado?
+## 9. Decisions
+
+### 9.1 Accepted Decisions
+- Persistir snapshots inválidos quando `latency > 120s`; marcar com `valid_for_analysis=False` para debugging e exclusão automática da análise.
+- Tratar jogos cancelados/adiados com `status='cancelled'` ou `status='postponed'`; manter snapshots persistidos, mas fora do fluxo de análise ativa.
+
+Justificativa técnica: as duas decisões afetam schema lógico e comportamento default observável do pipeline histórico. Persistir snapshots inválidos com flag explícita evita perda de evidência operacional, mantém rastreabilidade para debugging e impede que a camada analítica trate latência ruim como dado confiável. Isso precisa estar decidido antes da implementação porque altera colunas, filtros e contratos de leitura.
+
+Também era necessário fechar agora o tratamento de jogos cancelados/adiados porque isso define o ciclo de vida dos registros e evita lógica ambígua em consumidores downstream. Manter os snapshots, mas removê-los do fluxo ativo, preserva auditabilidade sem contaminar treino, cross-validation ou detecção de valor.
+
+### 9.2 Deferred Decisions
+- Cross-validation Pinnacle vs OddsPortal: manter o threshold de 10% na v1 e revisar depois conforme o `docs/decisions/deferred_decisions.md`.
 
 ## 10. References
 - ADR-001: Por que Poisson (PoissonModel consome dados aqui)

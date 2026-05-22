@@ -2,7 +2,7 @@
 
 ## 1. Metadata
 - **PRD ID:** PRD-00
-- **Status:** Draft
+- **Status:** Accepted
 - **Owner:** Rafael
 - **Created Date:** 2026-05-14
 - **Version:** 1.0.0
@@ -294,16 +294,22 @@ class BankrollManager:
 - STORY-05-014: Comando Telegram `/bankroll`
 - STORY-05-015: Comando Telegram `/pause` e `/resume`
 
-## 12. Resolved Decisions (Previously Open Questions)
+## 12. Decisions
 
-### Retention Policy ✅ RESOLVED
+### 12.1 Accepted Decisions
+
+#### Retention Policy
 - **odds_snapshots**: 6 meses (suficiente para sazonalidade + retreino)
 - **value_detections**: 1 ano (auditoria de decisões)
 - **gemini_validations**: 3 meses (logs IA)
 - **placed_bets**: Indefinido (histórico de performance)
 - **Implementação**: Cron job mensal de cleanup
 
-### AI Fallback ✅ RESOLVED
+Justificativa técnica: esta decisão afeta diretamente política de retenção observável, custo operacional e o contrato de consulta histórica entre módulos. Ela precisa estar fechada antes da implementação porque influencia cleanup jobs, critérios de auditoria e expectativas de disponibilidade de dados para retreino e análise de performance.
+
+O recorte escolhido preserva o que é estrutural para a v1 sem inflar complexidade de storage. `odds_snapshots` fica tempo suficiente para sazonalidade e recalibração; `value_detections` e `placed_bets` mantêm lastro para auditoria operacional; `gemini_validations` recebe janela menor porque é suporte de explicabilidade, não o histórico principal de negócio.
+
+#### AI Fallback
 **Decisão**: Graceful degradation
 ```python
 async def validate_with_gemini(opp):
@@ -320,14 +326,25 @@ async def validate_with_gemini(opp):
 ```
 **Comportamento**: Sistema continua, alerta vai com flag e stake reduzido.
 
-### Cold Start ✅ RESOLVED
+Justificativa técnica: esta decisão afeta comportamento default observável quando o provedor de IA falha. Não podia permanecer em aberto porque define se o sistema para, se tenta outro provedor, ou se segue com redução de confiança. Isso impacta diretamente fluxo operacional, contratos de resposta e expectativas do operador.
+
+Graceful degradation é a escolha correta para a implementação inicial porque mantém o sistema funcional sem introduzir dependência adicional, custo extra ou uma nova superfície de falha. O comportamento fica explícito: o alerta continua, mas com sinalização de menor confiança e stake reduzido.
+
+#### Cold Start
 **Decisão**: Estrutura 3 fases (Coleta Passiva → Paper Trading → Real).
 Detalhes na Seção 10 atualizada.
 
-## 12.1 Remaining Open Questions
-- Devemos suportar tênis em Fase 4 (após 3 meses de operação estável)?
-- Backtest histórico com dados de OddsPortal: viável? (precisa investigar)
-- Multi-bankroll (separar por liga) seria útil?
+Justificativa técnica: cold start altera o comportamento default da plataforma nos primeiros ciclos de operação e, portanto, não pode ser tratado como detalhe posterior. Sem esta decisão, o sistema ficaria ambíguo sobre quando pode gerar alertas, quando apenas observa e quando passa a operar com dinheiro real.
+
+A estrutura em três fases reduz risco operacional e evita inferências prematuras com base em base histórica insuficiente. Ela também cria um contrato claro para métricas, rollout e validação antes de expor o operador a recomendações em modo real.
+
+### 12.2 Deferred Decisions
+
+As questões abaixo foram formalmente adiadas e seguem registradas em [`docs/decisions/deferred_decisions.md`](../decisions/deferred_decisions.md).
+
+- Tênis em Fase 4: adiar; default v1 sem tênis.
+- Backtest histórico com dados de OddsPortal: adiar; não bloquear a implementação inicial por esta análise.
+- Multi-bankroll por liga: adiar; default v1 com bankroll único.
 
 ## 13. References
 - Código Base (EdgeHunter Repositório): `/backend/app/`

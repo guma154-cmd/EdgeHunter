@@ -3,9 +3,9 @@
 | Metadados | Valor |
 |---|---|
 | **ID** | PRD-02 |
-| **Status** | Rascunho |
+| **Status** | Accepted |
 | **Responsável** | John (PM) |
-| **Pai** | [PRD-00: Pivot de Value Betting](00_value_betting_pivot.md) |
+| **Pai** | [PRD-00: Pivot de Value Betting](./00_master_value_betting.md) |
 | **Criado em** | 2026-05-15 |
 
 ---
@@ -163,21 +163,30 @@ class PoissonModel:
 
 ## 7. Dependências
 
-- **Upstream**: [PRD-01 OddsHistorian](01_odds_historian.md) - Este módulo é a única fonte de dados para treinar o modelo de Poisson.
-- **Downstream**: [PRD-03 ValueDetector](03_value_detector.md) - Este módulo consumirá as probabilidades geradas pelo modelo de Poisson para calcular o Valor Esperado (EV).
+- **Upstream**: [PRD-01 OddsHistorian](./01_odds_historian.md) - Este módulo é a única fonte de dados para treinar o modelo de Poisson.
+- **Downstream**: [PRD-03 ValueDetector](./03_value_detector.md) - Este módulo consumirá as probabilidades geradas pelo modelo de Poisson para calcular o Valor Esperado (EV).
 
 ---
 
-## 8. Perguntas Abertas
+## 8. Decisões
 
-- A "vantagem do mando de campo" deve ser um parâmetro global único ou deve ser modelada por liga?
-- Devemos considerar a decadência temporal, onde partidas mais recentes têm um peso maior nos dados de treinamento?
-- Como devemos lidar com previsões para equipes com poucas partidas históricas (por exemplo, equipes recém-promovidas)?
+### 8.1 Decisões Aceitas
+- A vantagem de mando de campo será modelada como parâmetro global único na v1.
+- Para equipes com poucas partidas históricas (incluindo recém-promovidas), usar fallback para prior médio da liga e marcar a previsão com menor confiança operacional.
+
+Justificativa técnica: estas decisões afetam diretamente o contrato matemático inicial do modelo e o comportamento default das previsões, então não poderiam ser deixadas em aberto. Sem esse fechamento, a implementação do treino e inferência ficaria indeterminada sobre quantos parâmetros estimar e como tratar dados esparsos.
+
+O parâmetro global único de mando reduz variância e complexidade na v1, o que é mais compatível com a base inicial esperada. Para equipes com pouco histórico, usar prior médio da liga evita extrapolações frágeis e cria um comportamento previsível para o sistema: produzir saída conservadora, mas sem quebrar o pipeline ou inventar força estatística inexistente.
+
+### 8.2 Decisões Deferidas
+- Decadência temporal no treinamento: adiada; default v1 com peso uniforme para o histórico.
+
+As decisões deferidas estão consolidadas em [`docs/decisions/deferred_decisions.md`](../decisions/deferred_decisions.md).
 
 ---
 
 ## 9. Referências
 
-- **Interna**: [ADR-001: Escolha Inicial do Modelo (Poisson vs. ML)](../adr/001_initial_model_choice.md)
+- **Interna**: [ADR-001: Escolha Inicial do Modelo (Poisson vs. ML)](../architecture/adr_001_poisson_choice.md)
 - **Acadêmica**: Dixon, M. J., & Coles, S. G. (1997). "Modelling Association Football Scores and Inefficiencies in the Football Betting Market."
 - **Técnica**: Documentação do `scipy.optimize.minimize`.

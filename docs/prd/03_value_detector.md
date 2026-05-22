@@ -3,9 +3,9 @@
 | Metadados | Valor |
 |---|---|
 | **ID** | PRD-03 |
-| **Status** | Rascunho |
+| **Status** | Accepted |
 | **Responsável** | John (PM) |
-| **Pai** | [PRD-00: Pivot de Value Betting](00_value_betting_pivot.md) |
+| **Pai** | [PRD-00: Pivot de Value Betting](./00_master_value_betting.md) |
 | **Criado em** | 15/05/2026 |
 
 ---
@@ -377,20 +377,27 @@ def find_value_opportunities(recent_minutes=30):
 
 ---
 
-## 8. Questões em Aberto
+## 8. Decisions
 
-- O threshold inicial de 2% é conservador o suficiente para a Fase 3a?
-- Devemos considerar a margem do bookmaker (overround) no cálculo de EV?
-- Como tratar quando a Pinnacle ainda não tem odds para o jogo? (Esperar? Ignorar?)
-- A janela de 1 hora para deduplicação é adequada? Ou seria melhor 30 minutos?
+### 8.1 Accepted Decisions
+- Quando a Pinnacle ainda não tiver odds para o jogo, ignorar a oportunidade na v1 e aguardar a próxima coleta.
+
+Justificativa técnica: esta decisão afeta comportamento default observável da detecção e precisava ser resolvida agora porque muda o contrato da função de avaliação. Sem benchmark da Pinnacle, o sistema teria de escolher entre bloquear, estimar um proxy ou emitir oportunidade com base incompleta; isso altera tanto risco operacional quanto a interpretação do usuário sobre o significado do alerta.
+
+Ignorar a oportunidade na v1 é a decisão mais segura porque preserva a premissa central do detector: comparar a oportunidade contra um benchmark sharp confiável. Forçar um proxy nessa fase aumentaria risco de falso positivo e criaria uma semântica híbrida mal definida logo no início do produto.
+
+### 8.2 Deferred Decisions
+- O threshold inicial de 2% fica mantido na v1; revisão posterior conforme `docs/decisions/deferred_decisions.md`.
+- O cálculo de EV não vai considerar overround na v1; revisão posterior conforme `docs/decisions/deferred_decisions.md`.
+- A janela de deduplicação fica em 1 hora na v1; revisão posterior conforme `docs/decisions/deferred_decisions.md`.
 
 ---
 
 ## 9. Referências
 
 - **Interna**:
-    - ADR-002: Pinnacle como sharp benchmark (a ser criado).
-    - ADR-003: Estratégia híbrida (a ser criado).
+    - ADR-002: Pinnacle como sharp benchmark ([ADR-002](../architecture/adr_002_pinnacle_benchmark.md)).
+    - ADR-003: Estratégia híbrida ([ADR-003](../architecture/adr_003_hybrid_logic_ai.md)).
 - **Externa**:
     - Critério de Kelly (implementação no PRD-05).
     - Trabalhos acadêmicos sobre value betting em mercados esportivos.

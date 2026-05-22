@@ -146,6 +146,11 @@ def test_generate_indexes_writes_notice_and_document_sections(tmp_path: Path) ->
     adrs_output = docs_root / "_index" / "ADRS_INDEX.md"
 
     assert outputs == (prds_output, adrs_output)
-    assert generate_index.NOTICE in prds_output.read_text(encoding="utf-8")
-    assert "## Sample PRD" in prds_output.read_text(encoding="utf-8")
-    assert "## Sample ADR" in adrs_output.read_text(encoding="utf-8")
+    prds_text = prds_output.read_text(encoding="utf-8")
+    adrs_text = adrs_output.read_text(encoding="utf-8")
+    assert "> ⚠️ ARQUIVO AUTO-GERADO - NAO EDITAR MANUALMENTE" in prds_text
+    assert "> Gerado por: python scripts/generate_index.py" in prds_text
+    assert "> Fonte primaria: ver docs/prd/*.md e docs/architecture/*.md" in prds_text
+    assert "> Ultima geracao:" in prds_text
+    assert "## Sample PRD" in prds_text
+    assert "## Sample ADR" in adrs_text

@@ -1,6 +1,9 @@
 # PRDS_INDEX
 
-> NAO EDITAR MANUALMENTE - gerado por scripts/generate_index.py
+> ⚠️ ARQUIVO AUTO-GERADO - NAO EDITAR MANUALMENTE
+> Gerado por: python scripts/generate_index.py
+> Fonte primaria: ver docs/prd/*.md e docs/architecture/*.md
+> Ultima geracao: 2026-05-22 03:36 UTC
 
 Total de documentos: 6
 
@@ -108,7 +111,7 @@ O `ValueDetector` é o coração analítico do pivô para Value Betting do EdgeH
 
 Os módulos analíticos do EdgeHunter (PRD-02 e PRD-03) são determinísticos e estatísticos — excelentes para a maioria dos casos, mas podem ter **pontos cegos**:
 O `GeminiValidator` atua como um **revisor inteligente**, focado nos cenários de maior risco/recompensa. Ele complementa a lógica existente, fornecendo validação contextual e insights estratégicos, sem onerar o orçamento (o free tier do Gemini é suficiente para o uso planejado).
-` + "`" + `` + "`" + `` + "`" + `python { 'is_valid': bool, 'confidence': float,  # 0.0 a 1.0 'reasoning': str,     # explicação em PT-BR 'recommendation': 'place' | 'skip', 'stake_adjustment': float,  # 0.5 a 1.5 'tokens_used': int, 'response_time_ms': int } ` + "`" + `` + "`" + `` + "`" + `
+Acurácia últimos 7 dias: {accuracy_7d:.1f}% ROI últimos 30 dias: {roi_30d:.2f}%
 
 ---
 

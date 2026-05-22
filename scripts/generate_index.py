@@ -11,13 +11,18 @@ Outputs:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = PROJECT_ROOT / "docs" / "_index_config.yaml"
-NOTICE = "NAO EDITAR MANUALMENTE - gerado por scripts/generate_index.py"
+NOTICE_LINES = (
+    "> ⚠️ ARQUIVO AUTO-GERADO - NAO EDITAR MANUALMENTE",
+    "> Gerado por: python scripts/generate_index.py",
+    "> Fonte primaria: ver docs/prd/*.md e docs/architecture/*.md",
+)
 INLINE_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 STATUS_PATTERNS = (
     re.compile(r"^\s*[-*]\s*\*\*Status:?\*\*\s*(.+?)\s*$", re.IGNORECASE),
@@ -308,10 +313,12 @@ def _normalize_inline_links(text: str, source_path: Path) -> str:
 def render_index(section: SectionConfig, documents: tuple[DocumentSummary, ...]) -> str:
     """Render the generated index markdown for one section."""
     heading = f"{section.name.upper()}_INDEX"
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         f"# {heading}",
         "",
-        f"> {NOTICE}",
+        *NOTICE_LINES,
+        f"> Ultima geracao: {generated_at}",
         "",
         f"Total de documentos: {len(documents)}",
         "",

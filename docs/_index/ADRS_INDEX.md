@@ -1,6 +1,9 @@
 # ADRS_INDEX
 
-> NAO EDITAR MANUALMENTE - gerado por scripts/generate_index.py
+> ⚠️ ARQUIVO AUTO-GERADO - NAO EDITAR MANUALMENTE
+> Gerado por: python scripts/generate_index.py
+> Fonte primaria: ver docs/prd/*.md e docs/architecture/*.md
+> Ultima geracao: 2026-05-22 03:36 UTC
 
 Total de documentos: 5
 

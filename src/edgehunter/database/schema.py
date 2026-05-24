@@ -1,0 +1,271 @@
+"""SQLite schema management for STORY-01-002."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+import logging
+import sqlite3
+
+try:
+    from loguru import logger
+except ModuleNotFoundError:  # pragma: no cover - fallback for lean test environments
+    logger = logging.getLogger(__name__)
+
+
+DEFAULT_BUSY_TIMEOUT_MS = 5000
+DEFAULT_CACHE_SIZE_PAGES = -10000
+SCHEMA_VERSION = 1
+
+EXPECTED_TABLES: tuple[str, ...] = (
+    "matches",
+    "odds_snapshots",
+    "scraper_health",
+    "schema_version",
+)
+
+EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "matches": (
+        "match_id",
+        "home_team",
+        "away_team",
+        "league",
+        "match_date",
+        "home_goals",
+        "away_goals",
+        "result",
+        "status",
+        "created_at",
+        "updated_at",
+    ),
+    "odds_snapshots": (
+        "id",
+        "match_id",
+        "pinnacle_home",
+        "pinnacle_draw",
+        "pinnacle_away",
+        "pinnacle_timestamp",
+        "bet365_home",
+        "bet365_draw",
+        "bet365_away",
+        "bet365_timestamp",
+        "betano_home",
+        "betano_draw",
+        "betano_away",
+        "betano_timestamp",
+        "oddsportal_avg_home",
+        "oddsportal_avg_draw",
+        "oddsportal_avg_away",
+        "oddsportal_timestamp",
+        "max_latency_seconds",
+        "bookmakers_synced",
+        "valid_for_analysis",
+        "snapshot_timestamp",
+    ),
+    "scraper_health": (
+        "id",
+        "scraper_name",
+        "last_successful_run",
+        "last_data_collected",
+        "consecutive_failures",
+        "odds_stale",
+        "divergence_detected",
+        "status",
+        "last_alert_sent",
+        "checked_at",
+    ),
+    "schema_version": (
+        "version",
+        "applied_at",
+        "description",
+    ),
+}
+
+EXPECTED_INDEXES: tuple[str, ...] = (
+    "idx_matches_status",
+    "idx_matches_league_date",
+    "idx_snapshots_match_time",
+    "idx_snapshots_valid",
+    "idx_scraper_health_status",
+)
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS matches (
+    match_id TEXT PRIMARY KEY,
+    home_team TEXT NOT NULL,
+    away_team TEXT NOT NULL,
+    league TEXT NOT NULL,
+    match_date TIMESTAMP NOT NULL,
+    home_goals INTEGER,
+    away_goals INTEGER,
+    result TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status);
+CREATE INDEX IF NOT EXISTS idx_matches_league_date ON matches(league, match_date);
+
+CREATE TABLE IF NOT EXISTS odds_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id TEXT NOT NULL,
+    pinnacle_home REAL,
+    pinnacle_draw REAL,
+    pinnacle_away REAL,
+    pinnacle_timestamp TIMESTAMP,
+    bet365_home REAL,
+    bet365_draw REAL,
+    bet365_away REAL,
+    bet365_timestamp TIMESTAMP,
+    betano_home REAL,
+    betano_draw REAL,
+    betano_away REAL,
+    betano_timestamp TIMESTAMP,
+    oddsportal_avg_home REAL,
+    oddsportal_avg_draw REAL,
+    oddsportal_avg_away REAL,
+    oddsportal_timestamp TIMESTAMP,
+    max_latency_seconds INTEGER,
+    bookmakers_synced TEXT,
+    valid_for_analysis BOOLEAN NOT NULL DEFAULT 1,
+    snapshot_timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (match_id) REFERENCES matches(match_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_match_time
+    ON odds_snapshots(match_id, snapshot_timestamp);
+CREATE INDEX IF NOT EXISTS idx_snapshots_valid
+    ON odds_snapshots(valid_for_analysis, snapshot_timestamp);
+
+CREATE TABLE IF NOT EXISTS scraper_health (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scraper_name TEXT NOT NULL,
+    last_successful_run TIMESTAMP,
+    last_data_collected TIMESTAMP,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    odds_stale BOOLEAN NOT NULL DEFAULT 0,
+    divergence_detected BOOLEAN NOT NULL DEFAULT 0,
+    status TEXT,
+    last_alert_sent TIMESTAMP,
+    checked_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_scraper_health_status
+    ON scraper_health(scraper_name, status);
+
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    description TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO schema_version (version, description)
+VALUES (1, 'Initial PRD-01 OddsHistorian schema');
+"""
+
+
+def _connect(db_path: str) -> sqlite3.Connection:
+    connection = sqlite3.connect(db_path)
+    configure_connection(connection)
+    return connection
+
+
+def configure_connection(connection: sqlite3.Connection) -> None:
+    """Apply the SQLite PRAGMA profile required by PRD-01."""
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute(f"PRAGMA busy_timeout={DEFAULT_BUSY_TIMEOUT_MS}")
+    connection.execute("PRAGMA synchronous=NORMAL")
+    connection.execute(f"PRAGMA cache_size={DEFAULT_CACHE_SIZE_PAGES}")
+    connection.execute("PRAGMA foreign_keys=ON")
+
+
+def ensure_schema(db_path: str) -> bool:
+    """Apply the schema idempotently and configure the SQLite profile."""
+    try:
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        connection = _connect(db_path)
+        try:
+            connection.executescript(SCHEMA_SQL)
+            version = get_schema_version_from_connection(connection)
+            logger.info(f"Schema aplicado com sucesso. Versao atual: {version}")
+        finally:
+            connection.close()
+        return True
+    except (OSError, sqlite3.Error) as exc:
+        logger.error(f"Erro ao aplicar schema: {exc}")
+        return False
+
+
+def verify_schema(db_path: str) -> dict[str, bool]:
+    """Report whether each expected table exists."""
+    try:
+        connection = _connect(db_path)
+        try:
+            tables = set(get_existing_tables(connection))
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return {table: False for table in EXPECTED_TABLES}
+
+    return {table: table in tables for table in EXPECTED_TABLES}
+
+
+def get_schema_version(db_path: str) -> int | None:
+    """Return the current schema version, if available."""
+    try:
+        connection = _connect(db_path)
+        try:
+            return get_schema_version_from_connection(connection)
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return None
+
+
+def get_existing_tables(connection: sqlite3.Connection) -> tuple[str, ...]:
+    cursor = connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    return tuple(row[0] for row in cursor.fetchall())
+
+
+def get_schema_version_from_connection(connection: sqlite3.Connection) -> int | None:
+    cursor = connection.execute("SELECT MAX(version) FROM schema_version")
+    row = cursor.fetchone()
+    return None if row is None else row[0]
+
+
+def get_table_columns(db_path: str, table_name: str) -> tuple[str, ...]:
+    """Return the ordered column names for a table."""
+    connection = _connect(db_path)
+    try:
+        cursor = connection.execute(f"PRAGMA table_info({table_name})")
+        return tuple(row[1] for row in cursor.fetchall())
+    finally:
+        connection.close()
+
+
+def get_indexes(db_path: str) -> set[str]:
+    """Return all explicit indexes currently present."""
+    connection = _connect(db_path)
+    try:
+        cursor = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_autoindex_%'"
+        )
+        return {row[0] for row in cursor.fetchall()}
+    finally:
+        connection.close()
+
+
+def get_pragma_profile(db_path: str) -> dict[str, Any]:
+    """Return the PRAGMA values that define the required SQLite profile."""
+    connection = _connect(db_path)
+    try:
+        return {
+            "journal_mode": connection.execute("PRAGMA journal_mode").fetchone()[0],
+            "busy_timeout": connection.execute("PRAGMA busy_timeout").fetchone()[0],
+            "foreign_keys": connection.execute("PRAGMA foreign_keys").fetchone()[0],
+            "synchronous": connection.execute("PRAGMA synchronous").fetchone()[0],
+            "cache_size": connection.execute("PRAGMA cache_size").fetchone()[0],
+        }
+    finally:
+        connection.close()

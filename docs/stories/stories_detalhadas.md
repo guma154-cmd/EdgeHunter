@@ -285,17 +285,20 @@ Cenário: Divergência anormal entre Pinnacle e OddsPortal
 ## User Story (Formato Gherkin)
 
 **Como** um Administrador de Sistema
-**Quero** que um backup completo do banco de dados do OddsHistorian seja criado automaticamente todos os dias
-**Para que** possamos recuperar os dados em caso de falha catastrófica, corrupção de dados ou desastre.
+**Quero** que um backup técnico e consistente do banco SQLite do OddsHistorian seja criado automaticamente todos os dias
+**Para que** possamos recuperar os dados com segurança em caso de corrupção, falha operacional ou necessidade de restore validado.
 
 ## Critério de Aceitação
 
-- [ ] Um job automatizado deve ser executado diariamente em um horário de baixa utilização (ex: 03:00 UTC).
-- [ ] O job deve gerar um backup completo do banco de dados SQLite usando `sqlite3.Connection.backup()` ou equivalente com WAL checkpoint antes da cópia final.
+- [ ] Um job automatizado deve ser executado diariamente às `03:00 UTC`.
+- [ ] O job deve executar `wal_checkpoint(FULL)` antes de iniciar a cópia do banco.
+- [ ] O backup deve usar `sqlite3.Connection.backup()` para gerar snapshot consistente do SQLite.
 - [ ] O arquivo de backup deve ser comprimido (ex: .gz) para economizar espaço.
-- [ ] O arquivo de backup comprimido deve ser gravado no filesystem local em `backups/`.
-- [ ] A política de retenção deve ser de pelo menos 14 dias, com backups mais antigos sendo automaticamente excluídos.
-- [ ] Alertas devem ser enviados para a equipe de operações em caso de falha no processo de backup.
+- [ ] O artefato final deve ser gravado em diretório local de backups, sem depender de serviço externo.
+- [ ] A política de retenção deve manter somente os `7` backups mais recentes.
+- [ ] A integridade do snapshot gerado deve ser validada com `PRAGMA integrity_check`.
+- [ ] Falhas devem gerar retorno estruturado ou alerta desacoplado, sem I/O externo dentro da transação SQLite.
+- [ ] O procedimento de restore referenciado deve ser `docs/operations/backup_restore.md`.
 
 ## Exemplo de Teste (BDD — Behavior Driven Development)
 
@@ -303,16 +306,18 @@ Cenário: Divergência anormal entre Pinnacle e OddsPortal
 Cenário: Execução bem-sucedida do job de backup
   Dado que são 03:00 UTC e o job de backup é acionado
   Quando o processo de backup é executado
-  Então um arquivo de dump comprimido do banco de dados 'OddsHistorianDB' é criado
-  E o arquivo é gravado com sucesso no diretório local `backups/`
-  E nenhum alerta de falha é gerado.
+  Então um snapshot consistente do SQLite deve ser criado com `sqlite3.backup()`
+  E o WAL checkpoint deve ter sido executado antes da cópia
+  E o artefato final deve ser comprimido com gzip
+  E a integridade do snapshot deve retornar `ok` em `PRAGMA integrity_check`.
 
 Cenário: Falha na gravação do backup no diretório local
-  Dado que o job de backup cria o dump localmente com sucesso
+  Dado que o job de backup cria o snapshot localmente com sucesso
   Mas o diretório `backups/` está indisponível para escrita
   Quando o script tenta persistir o arquivo final
   Então a operação de gravação falha
-  E uma notificação de erro é enviada para o canal de alertas de operações (ex: Slack, PagerDuty).
+  E a falha deve ser registrada sem envio real de mensagem em ambiente de teste
+  E nenhum I/O externo deve ocorrer dentro da transação SQLite.
 ```
 
 ## Dependências
@@ -320,22 +325,26 @@ Cenário: Falha na gravação do backup no diretório local
 ### Upstream
 - Banco de dados SQLite provisionado.
 - Diretório local `backups/` provisionado e configurado com permissão de escrita.
+- Runbook operacional existente em `docs/operations/backup_restore.md`.
 
 ### Downstream
 - Processo de Disaster Recovery.
+- Operação de restore validada pelo runbook oficial do projeto.
 
 ## Riscos e Mitigações
 
 | Risco | Mitigação |
 |-------|-----------|
-| Backups podem estar corrompidos e inutilizáveis. | Implementar um processo de verificação de restauração periódica (ex: mensalmente, restaurar o backup em um ambiente de teste para validar sua integridade). |
-| O processo de backup pode degradar a performance do banco de dados. | Executar o backup SQLite em um horário de baixa utilização e monitorar o impacto de I/O e CPU durante a execução. |
+| Snapshot inconsistente por WAL pendente. | Executar `wal_checkpoint(FULL)` antes do backup e validar integridade do artefato gerado. |
+| Backup local crescer sem controle. | Aplicar rotação fixa de `7` backups com teste unitário cobrindo exclusão dos mais antigos. |
+| Alerta de falha reintroduzir I/O indevido em caminho crítico. | Manter qualquer alerta desacoplado da transação e validado sem envio real em teste. |
 
 ## Notas Técnicas
 
-- Utilizar um script Python ou uma ferramenta de agendamento (ex: cron) para orquestrar o processo.
-- Configurações de caminho e política de retenção devem ser lidas de `.env` via `python-dotenv`.
-- Referências: PRD-01, Seção 'Backup e Recuperação'.
+- O fluxo deve permanecer local ao host e não depende de armazenamento externo nem de ferramentas de dump de outros bancos.
+- Os testes devem usar banco temporário e diretórios temporários para validar backup, rotação e integridade sem cron real.
+- A referência correta de restore é `docs/operations/backup_restore.md`.
+- Referências: PRD-01, Seção 'Backup e Recuperação'; `docs/operations/backup_restore.md`; `docs/architecture/transaction-discipline.md`.
 
 ## Estimate Breakdown
 

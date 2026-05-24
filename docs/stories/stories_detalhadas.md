@@ -21,7 +21,7 @@ de cada onda de implementação (ver `docs/implementation/IMPLEMENTATION_WAVES.m
 - [PRD-01: OddsHistorian](#prd-01-oddshistorian)
   - [STORY-01-002: Schema SQL Idempotente](#story-01-002-schema-sql-idempotente)
   - [STORY-01-004: Validação de Dados no 'store_snapshot'](#story-01-004-valida%C3%A7%C3%A3o-de-dados-no-storesnapshot)
-  - [STORY-01-007: Health Checks Contínuos do Serviço](#story-01-007-health-checks-cont%C3%ADnuos-do-servi%C3%A7o)
+  - [STORY-01-007: Health Check Persistido de Scrapers](#story-01-007-health-check-persistido-de-scrapers)
   - [STORY-01-010: Backup Diário Automatizado da Base de Dados](#story-01-010-backup-di%C3%A1rio-automatizado-da-base-de-dados)
 - [PRD-02: PoissonModel](#prd-02-poissonmodel)
   - [STORY-02-001: Implementação do Algoritmo Poisson de Máxima Verossimilhança (MLE)](#story-02-001-implementa%C3%A7%C3%A3o-do-algoritmo-poisson-de-m%C3%A1xima-verossimilhan%C3%A7a-mle)
@@ -193,7 +193,7 @@ Cenário: Recebimento de um snapshot com tipo de dado inválido
 
 ---
 
-### STORY-01-007: Health Checks Contínuos do Serviço
+### STORY-01-007: Health Check Persistido de Scrapers
 
 ## Metadata
 - **PRD**: PRD-01
@@ -206,61 +206,66 @@ Cenário: Recebimento de um snapshot com tipo de dado inválido
 ## User Story (Formato Gherkin)
 
 **Como** um Operador de Sistema (SRE)
-**Quero** um endpoint de health check (`/health`) no serviço OddsHistorian
-**Para que** eu possa monitorar continuamente a saúde do serviço, incluindo a conectividade com o banco de dados e a latência de resposta.
+**Quero** um health check dos scrapers baseado em dados persistidos no OddsHistorian
+**Para que** eu possa detectar rapidamente ausência de dados, stale odds e divergências anormais entre fontes, com status persistido e pronto para alertas operacionais.
 
 ## Critério de Aceitação
 
-- [ ] O endpoint `/health` deve existir e ser acessível sem autenticação.
-- [ ] Uma resposta HTTP 200 (OK) deve ser retornada se o serviço estiver funcional e a conexão com o banco de dados estiver ativa.
-- [ ] Uma resposta HTTP 503 (Service Unavailable) deve ser retornada se a conexão com o banco de dados falhar.
-- [ ] O corpo da resposta deve ser um JSON contendo o status (`"status": "ok"` ou `"status": "error"`), um timestamp e a latência da verificação do banco de dados em milissegundos.
-- [ ] O health check deve ser leve e não deve impactar significativamente a performance do serviço (ex: executar uma query simples como `SELECT 1`).
+- [ ] Uma função ou job dedicado deve calcular e persistir health de cada scraper na tabela `scraper_health`.
+- [ ] Os estados possíveis devem ser, no mínimo, `healthy`, `warning` e `critical`.
+- [ ] O sistema deve detectar scraper sem dados por ciclos consecutivos, usando uma matriz simples e testável de severidade.
+- [ ] O sistema deve detectar stale odds quando um scraper deixa de atualizar odds por janela relevante definida no PRD.
+- [ ] O sistema deve detectar divergência anormal entre fontes, especialmente Pinnacle vs OddsPortal, quando houver base comparável.
+- [ ] A persistência em SQLite deve acontecer em transação curta, sem I/O externo dentro da escrita.
+- [ ] Alertas operacionais, se disparados, devem ocorrer fora da transação SQLite.
+- [ ] `check_transaction_discipline.py` deve continuar passando após a implementação.
 
 ## Exemplo de Teste (BDD — Behavior Driven Development)
 
 ```gherkin
-Cenário: Serviço e banco de dados saudáveis
-  Dado que o serviço OddsHistorian está em execução
-  E a conexão com o banco de dados está ativa
-  Quando uma requisição GET é feita para o endpoint '/health'
-  Então uma resposta HTTP 200 é retornada
-  E o corpo da resposta JSON contém '"status": "ok"'.
+Cenário: Scraper sem dados por 2 ciclos consecutivos
+  Dado que o scraper 'bet365' não produziu dados nas duas últimas execuções esperadas
+  Quando o job de health check processa o estado persistido
+  Então o status do scraper deve ser atualizado para 'warning' ou 'critical', conforme a matriz de severidade definida
+  E uma linha deve ser persistida em `scraper_health`.
 
-Cenário: Conexão com o banco de dados está indisponível
-  Dado que o serviço OddsHistorian está em execução
-  Mas o banco de dados está fora do ar
-  Quando uma requisição GET é feita para o endpoint '/health'
-  Então uma resposta HTTP 503 é retornada
-  E o corpo da resposta JSON contém '"status": "error"' e um detalhe sobre a falha de conexão.
+Cenário: Divergência anormal entre Pinnacle e OddsPortal
+  Dado que existe um match com odds recentes válidas para Pinnacle e OddsPortal
+  E a diferença relativa entre as fontes excede o limite definido
+  Quando o job de health check avalia a consistência cross-source
+  Então o scraper correspondente deve ser marcado com `divergence_detected = true`
+  E o status final deve refletir a severidade calculada sem enviar alerta dentro da transação de escrita.
 ```
 
 ## Dependências
 
 ### Upstream
-- Infraestrutura de serviço base (ex: container Docker, serviço web).
+- STORY-01-003: Registro idempotente de partidas.
+- STORY-01-004: Snapshots persistidos com timestamps e `valid_for_analysis`.
 
 ### Downstream
-- Sistema de monitoramento e alertas (ex: Prometheus, Grafana, Datadog).
-- Orquestrador de contêineres (ex: Kubernetes) para realizar liveness e readiness probes.
+- Sistema de alertas operacionais desacoplado da escrita SQLite.
+- Operação diária do OddsHistorian e monitoramento dos scrapers.
 
 ## Riscos e Mitigações
 
 | Risco | Mitigação |
 |-------|-----------|
-| O health check pode mascarar problemas sutis no serviço. | O health check deve ser expandido no futuro para incluir verificações mais profundas (ex: idade do último snapshot recebido), mas começando com a conectividade do DB. |
-| Ataques de negação de serviço (DoS) no endpoint de health. | Implementar rate limiting no endpoint, embora seja um alvo de baixo risco. |
+| Reintroduzir I/O externo dentro da transação ao disparar alertas. | Persistir primeiro o status em `scraper_health` e acionar qualquer alerta somente depois do commit. |
+| Regras de severidade ambíguas gerarem comportamento inconsistente. | Definir uma matriz simples de decisão para `healthy`, `warning` e `critical`, coberta por testes unitários. |
+| Divergência entre fontes gerar falso positivo frequente. | Aplicar threshold explícito e limitar comparação aos casos em que Pinnacle e OddsPortal tenham base comparável e timestamps utilizáveis. |
 
 ## Notas Técnicas
 
-- Este endpoint é fundamental para a automação de operações, como reinicializações automáticas de contêineres por orquestradores.
-- A query de verificação do DB deve ser extremamente rápida e de baixo custo.
-- Referências: PRD-01, Seção 'Operação e Monitoramento'.
+- Esta story não cria endpoint HTTP e não deve ser tratada como API `/health`.
+- A fonte primária é o PRD-01 aceito, complementado por `docs/implementation/ONDA_1_EXECUTION_PLAN.md`.
+- A implementação deve usar escritas curtas em SQLite e manter qualquer alerta Telegram desacoplado da transação.
+- Referências: PRD-01, Seção 'Health Check Methods'; `docs/architecture/transaction-discipline.md`.
 
 ## Estimate Breakdown
 
-- Design: 1 h
-- Implementação: 6 h
+- Design: 2 h
+- Implementação: 5 h
 - Testes: 4 h
 - Revisão: 1 h
 - **Total: 12 h**

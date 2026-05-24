@@ -16,12 +16,20 @@ from ..database.schema import configure_connection, ensure_schema
 MIN_ODD = 1.01
 MAX_ODD = 100.0
 SYNC_TOLERANCE_SECONDS = 120
+DEFAULT_SCRAPER_CYCLE_MINUTES = 15
 SUPPORTED_BOOKMAKERS: tuple[str, ...] = (
     "pinnacle",
     "bet365",
     "betano",
     "oddsportal_avg",
 )
+SCRAPER_COLUMN_MAP: dict[str, str] = {
+    "pinnacle": "pinnacle",
+    "bet365": "bet365",
+    "betano": "betano",
+    "oddsportal": "oddsportal_avg",
+}
+SCRAPER_NAMES: tuple[str, ...] = tuple(SCRAPER_COLUMN_MAP)
 
 
 class OddsHistorian:
@@ -60,6 +68,12 @@ class OddsHistorian:
         ).fetchone()
         if row is None:
             raise ValueError(f"match_id does not exist: {match_id}")
+
+    @staticmethod
+    def _parse_optional_timestamp(value: str | None) -> datetime | None:
+        if value is None:
+            return None
+        return datetime.fromisoformat(value)
 
     def _validate_snapshot_payload(
         self,
@@ -296,3 +310,209 @@ class OddsHistorian:
             return int(cursor.lastrowid)
         finally:
             write_connection.close()
+
+    def _read_latest_scraper_timestamps(
+        self,
+        now: datetime,
+    ) -> dict[str, datetime | None]:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT
+                    MAX(pinnacle_timestamp) AS pinnacle_timestamp,
+                    MAX(bet365_timestamp) AS bet365_timestamp,
+                    MAX(betano_timestamp) AS betano_timestamp,
+                    MAX(oddsportal_timestamp) AS oddsportal_timestamp
+                FROM odds_snapshots
+                WHERE snapshot_timestamp <= ?
+                """,
+                (now.isoformat(timespec="seconds"),),
+            ).fetchone()
+            assert row is not None
+            return {
+                "pinnacle": self._parse_optional_timestamp(row[0]),
+                "bet365": self._parse_optional_timestamp(row[1]),
+                "betano": self._parse_optional_timestamp(row[2]),
+                "oddsportal": self._parse_optional_timestamp(row[3]),
+            }
+        finally:
+            connection.close()
+
+    def _read_divergence_flags(
+        self,
+        now: datetime,
+        divergence_threshold_percent: float,
+    ) -> dict[str, bool]:
+        connection = self._connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT
+                    pinnacle_home,
+                    pinnacle_draw,
+                    pinnacle_away,
+                    oddsportal_avg_home,
+                    oddsportal_avg_draw,
+                    oddsportal_avg_away
+                FROM odds_snapshots
+                WHERE
+                    snapshot_timestamp <= ?
+                    AND pinnacle_timestamp IS NOT NULL
+                    AND oddsportal_timestamp IS NOT NULL
+                ORDER BY snapshot_timestamp DESC
+                LIMIT 1
+                """,
+                (now.isoformat(timespec="seconds"),),
+            ).fetchone()
+        finally:
+            connection.close()
+
+        if row is None:
+            return {scraper_name: False for scraper_name in SCRAPER_NAMES}
+
+        divergence_detected = False
+        pairs = (
+            (float(row[0]), float(row[3])),
+            (float(row[1]), float(row[4])),
+            (float(row[2]), float(row[5])),
+        )
+        for left_value, right_value in pairs:
+            smaller = min(left_value, right_value)
+            if smaller <= 0:
+                continue
+            diff_percent = abs(left_value - right_value) / smaller * 100.0
+            if diff_percent > divergence_threshold_percent:
+                divergence_detected = True
+                break
+
+        flags = {scraper_name: False for scraper_name in SCRAPER_NAMES}
+        if divergence_detected:
+            flags["pinnacle"] = True
+            flags["oddsportal"] = True
+        return flags
+
+    @staticmethod
+    def _build_health_result(
+        scraper_name: str,
+        checked_at: datetime,
+        last_data_collected: datetime | None,
+        consecutive_failures: int,
+        odds_stale: bool,
+        divergence_detected: bool,
+        no_data_warning_cycles: int,
+    ) -> dict[str, Any]:
+        issues: list[str] = []
+        status = "healthy"
+
+        if last_data_collected is None:
+            issues.append("no_recent_snapshots")
+            status = "critical"
+        elif divergence_detected:
+            issues.append("divergence_detected")
+            status = "critical"
+        elif odds_stale:
+            issues.append("odds_stale")
+            status = "critical"
+        elif consecutive_failures >= no_data_warning_cycles:
+            issues.append("no_data_recent_cycles")
+            status = "warning"
+
+        return {
+            "scraper_name": scraper_name,
+            "status": status,
+            "last_successful_run": last_data_collected,
+            "last_data_collected": last_data_collected,
+            "consecutive_failures": consecutive_failures,
+            "odds_stale": odds_stale,
+            "divergence_detected": divergence_detected,
+            "checked_at": checked_at,
+            "issues": issues,
+            "alert_recommended": status == "critical",
+        }
+
+    @SHORT_TX(max_duration_ms=100)
+    def _persist_scraper_health_records(
+        self,
+        health_records: list[dict[str, Any]],
+    ) -> None:
+        connection = self._connect()
+        try:
+            for record in health_records:
+                connection.execute(
+                    """
+                    INSERT INTO scraper_health (
+                        scraper_name,
+                        last_successful_run,
+                        last_data_collected,
+                        consecutive_failures,
+                        odds_stale,
+                        divergence_detected,
+                        status,
+                        last_alert_sent,
+                        checked_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record["scraper_name"],
+                        (
+                            record["last_successful_run"].isoformat(timespec="seconds")
+                            if record["last_successful_run"] is not None
+                            else None
+                        ),
+                        (
+                            record["last_data_collected"].isoformat(timespec="seconds")
+                            if record["last_data_collected"] is not None
+                            else None
+                        ),
+                        record["consecutive_failures"],
+                        int(record["odds_stale"]),
+                        int(record["divergence_detected"]),
+                        record["status"],
+                        None,
+                        record["checked_at"].isoformat(timespec="seconds"),
+                    ),
+                )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def evaluate_scraper_health(
+        self,
+        now: datetime,
+        stale_after_minutes: int = 60,
+        no_data_warning_cycles: int = 2,
+        divergence_threshold_percent: float = 10.0,
+    ) -> list[dict[str, Any]]:
+        checked_at = self._ensure_aware_datetime(now, "now")
+        latest_timestamps = self._read_latest_scraper_timestamps(checked_at)
+        divergence_flags = self._read_divergence_flags(
+            checked_at,
+            divergence_threshold_percent,
+        )
+
+        health_records: list[dict[str, Any]] = []
+        for scraper_name in SCRAPER_NAMES:
+            last_data_collected = latest_timestamps[scraper_name]
+            consecutive_failures = no_data_warning_cycles + 1
+            odds_stale = False
+
+            if last_data_collected is not None:
+                age_minutes = (checked_at - last_data_collected).total_seconds() / 60.0
+                consecutive_failures = int(age_minutes // DEFAULT_SCRAPER_CYCLE_MINUTES)
+                odds_stale = age_minutes > stale_after_minutes
+
+            health_records.append(
+                self._build_health_result(
+                    scraper_name=scraper_name,
+                    checked_at=checked_at,
+                    last_data_collected=last_data_collected,
+                    consecutive_failures=consecutive_failures,
+                    odds_stale=odds_stale,
+                    divergence_detected=divergence_flags[scraper_name],
+                    no_data_warning_cycles=no_data_warning_cycles,
+                )
+            )
+
+        self._persist_scraper_health_records(health_records)
+        return health_records

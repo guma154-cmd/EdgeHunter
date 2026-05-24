@@ -4,6 +4,7 @@
 |---|---|
 | **ID** | PRD-03 |
 | **Status** | Accepted |
+| **Aceito em** | 2026-05-23 |
 | **Responsável** | John (PM) |
 | **Pai** | [PRD-00: Pivot de Value Betting](./00_master_value_betting.md) |
 | **Criado em** | 15/05/2026 |
@@ -123,7 +124,7 @@ O `ValueDetector` é o coração analítico do pivô para Value Betting do EdgeH
   - **Critério de Aceitação**:
     - Cobertura de testes > 85% em todas as funções públicas.
     - **Testes Adversariais OBRIGATÓRIOS** (devem passar):
-      ` + "`" + `` + "`" + `` + "`" + `python
+      ```python
       def test_ev_calculation_correctness():
           """EV(0.6, 2.0) = 0.2 exato"""
 
@@ -153,7 +154,7 @@ O `ValueDetector` é o coração analítico do pivô para Value Betting do EdgeH
 
       def test_zero_division_protection():
           """Odds 0 ou negativa: ValueError, não crash"""
-      ` + "`" + `` + "`" + `` + "`" + `
+      ```
 
 ---
 
@@ -161,7 +162,7 @@ O `ValueDetector` é o coração analítico do pivô para Value Betting do EdgeH
 
 ### 5.1 Schema de Banco de Dados
 
-` + "`" + `` + "`" + `` + "`" + `sql
+```sql
 CREATE TABLE IF NOT EXISTS value_detections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id INTEGER NOT NULL,
@@ -203,11 +204,11 @@ CREATE INDEX IF NOT EXISTS idx_detections_alerted
     ON value_detections(alerted, detected_at);
 CREATE INDEX IF NOT EXISTS idx_detections_dedup 
     ON value_detections(match_id, outcome, bookmaker, detected_at);
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 ### 5.2 Contrato de API (classe ValueDetector)
 
-` + "`" + `` + "`" + `` + "`" + `python
+```python
 from typing import Optional, List, Dict, Literal
 from app.models.poisson_model import PoissonModel
 from app.data.odds_historian import OddsHistorian
@@ -276,11 +277,11 @@ class ValueDetector:
         Retorna (passou: bool, falhas: List[str]).
         """
         # ...
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 ### 5.3 Algoritmo de Detecção (Pseudocódigo)
 
-` + "`" + `` + "`" + `` + "`" + `python
+```python
 def find_value_opportunities(recent_minutes=30):
     opportunities = []
     snapshots = historian.get_snapshots(
@@ -340,7 +341,7 @@ def find_value_opportunities(recent_minutes=30):
                     opportunities.append({...})
 
     return sorted(opportunities, key=lambda x: max(x.get('ev_pinnacle') or 0, x.get('ev_model') or 0), reverse=True)
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 ### 5.4 Requisitos de Performance
 
@@ -393,7 +394,15 @@ Ignorar a oportunidade na v1 é a decisão mais segura porque preserva a premiss
 
 ---
 
-## 9. Referências
+## 9. Consequências
+
+Este PRD obriga o backend a expor uma camada de detecção determinística e auditável, com cálculo de EV, deduplicação e persistência completa das oportunidades encontradas. O código não pode tratar a detecção como heurística informal; ele precisa registrar a origem da decisão, suportar filtros por validade do snapshot e manter performance previsível mesmo com crescimento do histórico.
+
+Na prática, isso introduz schema dedicado (`value_detections`), regras explícitas de deduplicação e contratos claros entre OddsHistorian, PoissonModel, GeminiValidator e AutoEvolution. Também implica que a API e o scheduler passem a trabalhar com eventos de detecção como entidades próprias, e não apenas como logs soltos ou mensagens efêmeras.
+
+Como consequência operacional, qualquer mudança em threshold, benchmark ou semântica de oportunidade detectada precisa preservar a rastreabilidade definida aqui. Isso reduz risco de falso positivo invisível e garante que PRD-04 e PRD-05 recebam insumos estáveis para validação, staking e alertas.
+
+## 10. Referências
 
 - **Interna**:
     - ADR-002: Pinnacle como sharp benchmark ([ADR-002](../architecture/adr_002_pinnacle_benchmark.md)).

@@ -141,8 +141,8 @@ Cenário: Execução subsequente do script em um banco de dados já populado
 - [ ] A função deve validar a presença de todos os campos obrigatórios (ex: `event_id`, `market_id`, `timestamp`).
 - [ ] Tipos de dados devem ser validados (ex: `odds` deve ser um número, `last_updated` deve ser um timestamp ISO 8601 válido).
 - [ ] Valores numéricos devem ser checados contra limites lógicos (ex: odds > 1.0, probabilidades entre 0 e 1).
-- [ ] Payloads que falham na validação devem ser rejeitados com um erro HTTP 400 (Bad Request) claro e informativo.
-- [ ] Payloads que falham na validação devem ser logados em um tópico de "letras mortas" (dead-letter queue) para análise posterior.
+- [ ] Payloads que falham na validação devem levantar `ValueError` (ou exceção customizada equivalente) com mensagem clara e informativa.
+- [ ] Payloads que falham na validação devem ser persistidos em uma tabela SQLite `failed_snapshots` para análise posterior.
 
 ## Exemplo de Teste (BDD — Behavior Driven Development)
 
@@ -151,14 +151,14 @@ Cenário: Recebimento de um snapshot de dados válido
   Dado que a função 'store_snapshot' recebe um payload JSON com todos os campos válidos e obrigatórios
   Quando a função processa o snapshot
   Então os dados são persistidos corretamente no banco de dados
-  E uma resposta HTTP 201 (Created) é retornada.
+  E nenhuma exceção é levantada.
 
 Cenário: Recebimento de um snapshot com tipo de dado inválido
   Dado que a função 'store_snapshot' recebe um payload JSON onde 'odds' é uma string ("invalid_odds") em vez de um número
   Quando a função processa o snapshot
-  Então os dados NÃO são persistidos no banco de dados
-  E uma resposta HTTP 400 é retornada com a mensagem "Erro de validação: 'odds' deve ser um número."
-  E o payload inválido é enviado para a dead-letter queue.
+  Então os dados NÃO são persistidos no banco de dados principal
+  E uma `ValueError` é levantada com a mensagem "Erro de validação: 'odds' deve ser um número."
+  E o payload inválido é gravado na tabela `failed_snapshots`.
 ```
 
 ## Dependências
@@ -180,7 +180,7 @@ Cenário: Recebimento de um snapshot com tipo de dado inválido
 ## Notas Técnicas
 
 - A implementação pode usar um framework de validação de schema para desacoplar a lógica de validação do código de negócio.
-- O formato do log na dead-letter queue deve ser JSON, contendo o payload original e o motivo da falha.
+- O registro em `failed_snapshots` deve armazenar o payload original, o motivo da falha e o timestamp da rejeição.
 - Referências: PRD-01, Seção 'API de Ingestão'.
 
 ## Estimate Breakdown
@@ -286,9 +286,9 @@ Cenário: Conexão com o banco de dados está indisponível
 ## Critério de Aceitação
 
 - [ ] Um job automatizado deve ser executado diariamente em um horário de baixa utilização (ex: 03:00 UTC).
-- [ ] O job deve gerar um backup completo do banco de dados SQLite usando `sqlite3 .backup` ou equivalente.
+- [ ] O job deve gerar um backup completo do banco de dados SQLite usando `sqlite3.Connection.backup()` ou equivalente com WAL checkpoint antes da cópia final.
 - [ ] O arquivo de backup deve ser comprimido (ex: .gz) para economizar espaço.
-- [ ] O arquivo de backup comprimido deve ser enviado para um armazenamento de objetos seguro e remoto (ex: AWS S3, Google Cloud Storage).
+- [ ] O arquivo de backup comprimido deve ser gravado no filesystem local em `backups/`.
 - [ ] A política de retenção deve ser de pelo menos 14 dias, com backups mais antigos sendo automaticamente excluídos.
 - [ ] Alertas devem ser enviados para a equipe de operações em caso de falha no processo de backup.
 
@@ -299,14 +299,14 @@ Cenário: Execução bem-sucedida do job de backup
   Dado que são 03:00 UTC e o job de backup é acionado
   Quando o processo de backup é executado
   Então um arquivo de dump comprimido do banco de dados 'OddsHistorianDB' é criado
-  E o arquivo é enviado com sucesso para o bucket S3 de backups
+  E o arquivo é gravado com sucesso no diretório local `backups/`
   E nenhum alerta de falha é gerado.
 
-Cenário: Falha no envio do backup para o armazenamento remoto
+Cenário: Falha na gravação do backup no diretório local
   Dado que o job de backup cria o dump localmente com sucesso
-  Mas as credenciais do S3 estão inválidas
-  Quando o script tenta enviar o arquivo para o S3
-  Então a operação de envio falha
+  Mas o diretório `backups/` está indisponível para escrita
+  Quando o script tenta persistir o arquivo final
+  Então a operação de gravação falha
   E uma notificação de erro é enviada para o canal de alertas de operações (ex: Slack, PagerDuty).
 ```
 
@@ -314,7 +314,7 @@ Cenário: Falha no envio do backup para o armazenamento remoto
 
 ### Upstream
 - Banco de dados SQLite provisionado.
-- Armazenamento de objetos (S3 ou equivalente) provisionado e configurado.
+- Diretório local `backups/` provisionado e configurado com permissão de escrita.
 
 ### Downstream
 - Processo de Disaster Recovery.
@@ -328,8 +328,8 @@ Cenário: Falha no envio do backup para o armazenamento remoto
 
 ## Notas Técnicas
 
-- Utilizar um script shell ou uma ferramenta de agendamento (ex: cron, AWS Lambda scheduled event) para orquestrar o processo.
-- As credenciais de acesso ao S3 devem ser gerenciadas de forma segura (ex: via IAM Roles ou secrets manager).
+- Utilizar um script Python ou uma ferramenta de agendamento (ex: cron) para orquestrar o processo.
+- Configurações de caminho e política de retenção devem ser lidas de `.env` via `python-dotenv`.
 - Referências: PRD-01, Seção 'Backup e Recuperação'.
 
 ## Estimate Breakdown
@@ -435,7 +435,7 @@ Cenário: Predição para uma nova partida
 - [ ] O pipeline deve ser acionado por um agendador (ex: diariamente).
 - [ ] O pipeline deve extrair os dados de partidas dos últimos N meses do banco de dados `OddsHistorian`.
 - [ ] O pipeline deve invocar a lógica de treinamento da STORY-02-001 com os dados extraídos.
-- [ ] O objeto do modelo treinado deve ser serializado e salvo em um registro de modelos (ex: MLflow, ou um bucket S3 versionado).
+- [ ] O objeto do modelo treinado deve ser serializado e salvo em `models/` usando `pickle` ou `joblib`, com versionamento por nome de arquivo.
 - [ ] Cada modelo versionado deve ser associado a métricas de performance (ex: log-loss, acurácia) calculadas em um conjunto de validação.
 - [ ] O pipeline deve falhar e enviar um alerta se o desempenho do novo modelo for significativamente pior do que o modelo em produção.
 
@@ -447,7 +447,7 @@ Cenário: Execução bem-sucedida do pipeline de treinamento
   E há novos dados de partidas no OddsHistorian
   Quando o pipeline é executado
   Então um novo objeto de modelo é treinado e serializado
-  E o modelo é salvo no registro de modelos com um novo número de versão e métricas de performance.
+  E o modelo é salvo em `models/` com um novo número de versão e métricas de performance.
 
 Cenário: Novo modelo tem performance degradada
   Dado que o pipeline de treinamento é acionado
@@ -476,7 +476,7 @@ Cenário: Novo modelo tem performance degradada
 
 ## Notas Técnicas
 
-- Ferramentas como MLflow podem simplificar muito o versionamento, armazenamento e monitoramento de modelos.
+- O versionamento pode ser feito por convenção de nomes em `models/`, com metadados auxiliares persistidos em arquivo local ou SQLite.
 - O critério de "performance significativamente pior" deve ser definido por um limiar estatístico.
 - Referências: PRD-02, Seção 'Ciclo de Vida do Modelo (MLOps)'.
 

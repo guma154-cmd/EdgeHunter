@@ -3,7 +3,7 @@
 > ⚠️ ARQUIVO AUTO-GERADO - NAO EDITAR MANUALMENTE
 > Gerado por: python scripts/generate_index.py
 > Fonte primaria: ver docs/prd/*.md e docs/architecture/*.md
-> Ultima geracao: 2026-05-22 03:36 UTC
+> Ultima geracao: 2026-05-24 01:30 UTC
 
 Total de documentos: 6
 
@@ -25,6 +25,7 @@ Total de documentos: 6
 - Metadados:
   - PRD ID: PRD-00
   - Status: Accepted
+  - Aceito em: 2026-05-23
   - Owner: Rafael
   - Created Date: 2026-05-14
   - Version: 1.0.0
@@ -45,6 +46,7 @@ Abaixo a representação da arquitetura macro, detalhando o fluxo desde a extra�
 - Metadados:
   - ID: PRD-01
   - Status: Accepted
+  - Aceito em: 2026-05-23
   - Owner: Rafael
   - Parent: PRD-00
   - Created: 2026-05-14
@@ -65,6 +67,7 @@ Modificar `backend/app/data/scheduler.py`:
 - Metadados:
   - ID: PRD-02
   - Status: Accepted
+  - Aceito em: 2026-05-23
   - Responsável: John (PM)
   - Pai: [PRD-00: Pivot de Value Betting](/docs/prd/00_master_value_betting.md)
   - Criado em: 2026-05-15
@@ -84,6 +87,7 @@ O cerne do modelo baseia-se na Estimativa de Máxima Verossimilhança para encon
 - Metadados:
   - ID: PRD-03
   - Status: Accepted
+  - Aceito em: 2026-05-23
   - Responsável: John (PM)
   - Pai: [PRD-00: Pivot de Value Betting](/docs/prd/00_master_value_betting.md)
   - Criado em: 15/05/2026
@@ -92,7 +96,7 @@ O cerne do modelo baseia-se na Estimativa de Máxima Verossimilhança para encon
 
 Os bookmakers embutem uma margem de lucro (overround ~5-7% em casas "soft", ~2-3% na Pinnacle). Quando a Bet365 ou a Betano oferecem odds maiores que a "verdade" do mercado (representada pela Pinnacle) ou maiores que a nossa estimativa independente (PoissonModel), há **valor** — uma expectativa matemática positiva de lucro no longo prazo.
 O `ValueDetector` é o coração analítico do pivô para Value Betting do EdgeHunter. Sem ele, todos os outros módulos (coleta de dados, modelagem) são apenas infraestrutura sem aplicação prática.
-` + "`" + `` + "`" + `` + "`" + `python def test_ev_calculation_correctness(): """EV(0.6, 2.0) = 0.2 exato"""
+Justificativa técnica: esta decisão afeta comportamento default observável da detecção e precisava ser resolvida agora porque muda o contrato da função de avaliação. Sem benchmark da Pinnacle, o sistema teria de escolher entre bloquear, estimar um proxy ou emitir oportunidade com base incompleta; isso altera tanto risco operacional quanto a interpretação do usuário sobre o significado do alerta.
 
 ---
 
@@ -103,6 +107,7 @@ O `ValueDetector` é o coração analítico do pivô para Value Betting do EdgeH
 - Metadados:
   - ID: PRD-04
   - Status: Accepted
+  - Aceito em: 2026-05-23
   - Responsável: John (PM)
   - Pai: [PRD-00: Pivot de Value Betting](/docs/prd/00_master_value_betting.md)
   - Criado em: 15/05/2026
@@ -122,6 +127,7 @@ Acurácia últimos 7 dias: {accuracy_7d:.1f}% ROI últimos 30 dias: {roi_30d:.2f
 - Metadados:
   - ID: PRD-05
   - Status: Accepted
+  - Aceito em: 2026-05-23
   - Responsável: John (PM)
   - Pai: [PRD-00: Pivot de Value Betting](/docs/prd/00_master_value_betting.md)
   - Criado em: 15/05/2026

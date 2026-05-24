@@ -3,6 +3,7 @@
 ## 1. Metadata
 - **PRD ID:** PRD-00
 - **Status:** Accepted
+- **Aceito em:** 2026-05-23
 - **Owner:** Rafael
 - **Created Date:** 2026-05-14
 - **Version:** 1.0.0
@@ -346,7 +347,15 @@ As questões abaixo foram formalmente adiadas e seguem registradas em [`docs/dec
 - Backtest histórico com dados de OddsPortal: adiar; não bloquear a implementação inicial por esta análise.
 - Multi-bankroll por liga: adiar; default v1 com bankroll único.
 
-## 13. References
+## 13. Consequências
+
+Este PRD força o código do EdgeHunter a se organizar como uma cadeia explícita de módulos acoplados por contratos estáveis: coleta histórica, modelagem, detecção de valor, validação por IA e governança operacional. Na prática, isso exige que novos componentes exponham interfaces previsíveis e que o scheduler trate cada etapa como parte de um pipeline observável, e não como automações isoladas.
+
+No código, o impacto material é que a base de dados e os modelos deixam de servir apenas ao caso de surebet e passam a sustentar um fluxo de value betting com retenção histórica, auditoria de decisões e transição controlada entre modos de operação. Isso justifica tabelas adicionais, políticas de retenção, checkpoints de sanidade e integrações entre backend, Telegram e os módulos analíticos.
+
+Também fica estabelecido que decisões críticas de rollout, cold start, fallback e retenção não podem ser deixadas implícitas em stories ou implementação ad hoc. Sempre que um módulo downstream depender de comportamento default, esse comportamento precisa estar fechado neste PRD ou nos documentos derivados antes da implementação.
+
+## 14. References
 - Código Base (EdgeHunter Repositório): `/backend/app/`
 - Referências: Algoritmos de Precificação de Apostas usando Distribuição de Poisson (Constantinou).
 - Framework Organizacional: Metodologia BMAD-METHOD.

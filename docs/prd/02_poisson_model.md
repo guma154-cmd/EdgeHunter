@@ -4,6 +4,7 @@
 |---|---|
 | **ID** | PRD-02 |
 | **Status** | Accepted |
+| **Aceito em** | 2026-05-23 |
 | **Responsável** | John (PM) |
 | **Pai** | [PRD-00: Pivot de Value Betting](./00_master_value_betting.md) |
 | **Criado em** | 2026-05-15 |
@@ -97,25 +98,25 @@ O modelo de distribuição de Poisson é um método estatístico bem estabelecid
 O cerne do modelo baseia-se na Estimativa de Máxima Verossimilhança para encontrar os parâmetros ideais de ataque e defesa para cada equipe.
 
 Para cada partida no conjunto de dados de treinamento, calculamos o número esperado de gols (lambda) para as equipes da casa e visitante:
-` + "`" + `` + "`" + `` + "`" + `
+```
 lambda_casa = forca_ataque[equipe_casa] * forca_defesa[equipe_visitante] * vantagem_casa
 lambda_visitante = forca_ataque[equipe_visitante] * forca_defesa[equipe_casa]
-` + "`" + `` + "`" + `` + "`" + `
+```
 A log-verossimilhança negativa (NLL) é então calculada como a soma dos logs negativos da função de massa de probabilidade (PMF) de Poisson para os gols reais marcados:
-` + "`" + `` + "`" + `` + "`" + `
+```
 nll = 0
 para partida em dados_treinamento:
     # calcular lambda_casa, lambda_visitante
     nll += -log(pmf_poisson(gols_casa_reais, lambda_casa))
     nll += -log(pmf_poisson(gols_visitante_reais, lambda_visitante))
-` + "`" + `` + "`" + `` + "`" + `
+```
 Usamos `scipy.optimize.minimize(method='BFGS')` para encontrar os parâmetros `forca_ataque` e `forca_defesa` que minimizam a NLL. O treinamento é realizado independentemente para cada liga para evitar a diluição do sinal.
 
 ### 5.2 Contrato da API
 
 A funcionalidade será encapsulada em uma classe `PoissonModel`.
 
-` + "`" + `` + "`" + `` + "`" + `python
+```python
 class PoissonModel:
     def __init__(self, league: str, min_training_matches: int = 30):
         # ...
@@ -135,7 +136,7 @@ class PoissonModel:
     def evaluate_accuracy(self, days_back: int) -> dict[str, float]:
         """Executa um backtest e retorna métricas de performance."""
         # ...
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 ### 5.3 Armazenamento
 
@@ -185,7 +186,15 @@ As decisões deferidas estão consolidadas em [`docs/decisions/deferred_decision
 
 ---
 
-## 9. Referências
+## 9. Consequências
+
+Este PRD fixa que a camada preditiva do projeto deve produzir probabilidades 1x2 consistentes, treináveis com dados reais do OddsHistorian e consumíveis pelo ValueDetector sem ambiguidade. Isso afeta diretamente a implementação do módulo de modelo, a forma de persistir pesos e metadados e os contratos usados por consumers para lidar com previsões válidas, fallback e sanidade.
+
+No código, a consequência é que treino, inferência, serialização e validação deixam de ser detalhes internos e passam a compor uma API estável (`train`, `load_weights`, `predict_probabilities`, `evaluate_accuracy`, `sanity_check`). Também fica obrigatório tratar classes de erro previsíveis, como equipes sem histórico suficiente e falha de convergência, sem quebrar o pipeline operacional.
+
+Esse PRD ainda define que o modelo é um benchmark estatístico disciplinado, não uma caixa-preta livre para crescer sem controle. Qualquer evolução posterior, como decadência temporal ou ensemble, precisa respeitar os contratos e critérios de aceitação já estabelecidos aqui para não introduzir drift de comportamento nos módulos downstream.
+
+## 10. Referências
 
 - **Interna**: [ADR-001: Escolha Inicial do Modelo (Poisson vs. ML)](../architecture/adr_001_poisson_choice.md)
 - **Acadêmica**: Dixon, M. J., & Coles, S. G. (1997). "Modelling Association Football Scores and Inefficiencies in the Football Betting Market."

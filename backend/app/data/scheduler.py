@@ -2,14 +2,18 @@
 EdgeHunter — Scheduler de tarefas automáticas
 APScheduler gerencia todas as tarefas periódicas do sistema.
 """
+from __future__ import annotations
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 import json
 import logging
 import pytz
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 import numpy as np
+
+from src.edgehunter.core.decorators import SHORT_TX
 
 logger = logging.getLogger(__name__)
 
@@ -140,17 +144,148 @@ def deduplicate_games(games: list) -> list:
                 seen[key]['all_odds'].update(g.get('all_odds', {}))
     return list(seen.values())
 
+
+def _parse_match_datetime(raw_match_date: str) -> datetime:
+    """Best-effort parser for scraped match dates."""
+    try:
+        return datetime.fromisoformat(raw_match_date.replace(' ', 'T'))
+    except Exception:
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@SHORT_TX(max_duration_ms=100)
+def _persist_confirmed_opportunities(confirmed_opportunities: list[dict], bankroll_manager) -> list[tuple[int, dict]]:
+    """
+    Persist surebets using a short SQL-only transaction.
+
+    Network I/O must stay outside this function.
+    """
+    from app.models import Game, Surebet
+    from app import db
+
+    pending_alerts: list[tuple[int, dict]] = []
+
+    for opp in confirmed_opportunities:
+        game = Game.query.filter_by(
+            home_team=opp['home_team'],
+            away_team=opp['away_team'],
+            league=opp['league']
+        ).first()
+
+        if not game:
+            game = Game(
+                home_team=opp['home_team'],
+                away_team=opp['away_team'],
+                league=opp['league'],
+                match_date=_parse_match_datetime(opp['match_date']),
+                status='scheduled'
+            )
+            db.session.add(game)
+            db.session.flush()
+
+        existing = Surebet.query.filter_by(
+            game_id=game.id,
+            bookmaker_A=opp['bookmaker_A'],
+            bookmaker_B=opp['bookmaker_B'],
+            outcome_A=opp['outcome_A']
+        ).first()
+
+        if existing:
+            continue
+
+        surebet = Surebet(
+            game_id=game.id,
+            bookmaker_A=opp['bookmaker_A'],
+            outcome_A=opp['outcome_A'],
+            odds_A=opp['odds_A'],
+            stake_A=opp['stake_A'],
+            bookmaker_B=opp['bookmaker_B'],
+            outcome_B=opp['outcome_B'],
+            odds_B=opp['odds_B'],
+            stake_B=opp['stake_B'],
+            total_stake=opp['total_stake'],
+            profit_pct=opp['profit_pct'],
+            guaranteed_profit=opp['guaranteed_profit'],
+            bookmaker_X=opp.get('extra_bookmaker'),
+            outcome_X=opp.get('extra_outcome'),
+            odds_X=opp.get('extra_odds'),
+            stake_X=opp.get('extra_stake')
+        )
+        db.session.add(surebet)
+        db.session.flush()
+
+        bankroll_manager.update(opp['bookmaker_A'], -opp['stake_A'])
+        bankroll_manager.update(opp['bookmaker_B'], -opp['stake_B'])
+        if opp.get('extra_bookmaker'):
+            bankroll_manager.update(opp['extra_bookmaker'], -opp.get('extra_stake', 0.0))
+
+        pending_alerts.append((surebet.id, dict(opp)))
+
+    db.session.commit()
+    return pending_alerts
+
+
+@SHORT_TX(max_duration_ms=100)
+def _mark_surebet_alert_sent(surebet_id: int) -> None:
+    """Mark a surebet as having a delivered Telegram alert in a short transaction."""
+    from app.models import Surebet
+    from app import db
+
+    surebet = Surebet.query.get(surebet_id)
+    if not surebet:
+        logger.warning("[Telegram] Surebet %s não encontrada ao marcar alerta", surebet_id)
+        return
+
+    surebet.alert_sent = True
+    db.session.commit()
+
+
+def _enqueue_surebet_alert(app, surebet_id: int, opportunity: dict) -> None:
+    """
+    Defer Telegram I/O until after the persistence transaction commits.
+    """
+    now_utc = datetime.now(timezone.utc)
+    scheduler = get_scheduler()
+    job_id = f"surebet_alert_{surebet_id}_{int(now_utc.timestamp() * 1000)}"
+    scheduler.add_job(
+        func=_send_telegram_alert,
+        args=[app, surebet_id, opportunity],
+        trigger='date',
+        run_date=now_utc,
+        id=job_id,
+        replace_existing=False,
+        misfire_grace_time=30,
+    )
+
+
+def _send_telegram_alert(app, surebet_id: int, opportunity: dict) -> bool:
+    """
+    Execute Telegram I/O outside the main SQLite write transaction.
+    """
+    with app.app_context():
+        from app.alerts.telegram_bot import send_surebet_alert
+        from app import db
+
+        try:
+            delivered = send_surebet_alert(opportunity)
+            if delivered:
+                _mark_surebet_alert_sent(surebet_id)
+                logger.info("[Telegram] Alerta enviado para surebet %s", surebet_id)
+            else:
+                logger.error("[Telegram] Falha ao enviar alerta para surebet %s", surebet_id)
+            return delivered
+        except Exception as exc:
+            db.session.rollback()
+            logger.error("[Telegram] Exceção ao enviar alerta da surebet %s: %s", surebet_id, exc)
+            return False
+
+
 def _fetch_odds_task(app):
     """Busca novas odds e detecta value bets."""
     with app.app_context():
         try:
-            from flask import current_app
-            from app.models import Game, Surebet
-            from app import db
-            from app.alerts.telegram_bot import send_surebet_alert
             from app.detection.surebet_detector import SurebetDetector
             from app.engine.bankroll_manager import BankrollManager
-            from app.data.direct_scrapers import fetch_direct_sync
             
             bm = BankrollManager()
             games = []
@@ -264,85 +399,23 @@ def _fetch_odds_task(app):
                 if _quick_confirm(opp, games):
                     confirmed_opportunities.append(opp)
 
-            for opp in confirmed_opportunities:
-                # Checar ou criar jogo no banco
-                game = Game.query.filter_by(
-                    home_team=opp['home_team'],
-                    away_team=opp['away_team'],
-                    league=opp['league']
-                ).first()
-                
-                if not game:
-                    try:
-                        dt_str = opp['match_date'].replace(' ', 'T')
-                        match_dt = datetime.fromisoformat(dt_str)
-                    except:
-                        match_dt = datetime.utcnow()
+            # Keep the SQLite write lock limited to SQL-only persistence.
+            pending_alerts = _persist_confirmed_opportunities(confirmed_opportunities, bm)
+            new_bets = len(pending_alerts)
 
-                    game = Game(
-                        home_team=opp['home_team'],
-                        away_team=opp['away_team'],
-                        league=opp['league'],
-                        match_date=match_dt,
-                        status='scheduled'
-                    )
-                    db.session.add(game)
-                    db.session.flush()
-                
-                # Verificar se já existe essa surebet (evitar duplicatas no mesmo jogo/casa)
-                existing = Surebet.query.filter_by(
-                    game_id=game.id,
-                    bookmaker_A=opp['bookmaker_A'],
-                    bookmaker_B=opp['bookmaker_B'],
-                    outcome_A=opp['outcome_A']
-                ).first()
-                
-                if not existing:
-                    surebet = Surebet(
-                        game_id=game.id,
-                        bookmaker_A=opp['bookmaker_A'],
-                        outcome_A=opp['outcome_A'],
-                        odds_A=opp['odds_A'],
-                        stake_A=opp['stake_A'],
-                        bookmaker_B=opp['bookmaker_B'],
-                        outcome_B=opp['outcome_B'],
-                        odds_B=opp['odds_B'],
-                        stake_B=opp['stake_B'],
-                        total_stake=opp['total_stake'],
-                        profit_pct=opp['profit_pct'],
-                        guaranteed_profit=opp['guaranteed_profit'],
-                        # Suporte 3-way
-                        bookmaker_X=opp.get('extra_bookmaker'),
-                        outcome_X=opp.get('extra_outcome'),
-                        odds_X=opp.get('extra_odds'),
-                        stake_X=opp.get('extra_stake')
-                    )
-                    db.session.add(surebet)
-                    
-                    # Atualizar BankrollManager (deduzir stakes)
-                    bm.update(opp['bookmaker_A'], -opp['stake_A'])
-                    bm.update(opp['bookmaker_B'], -opp['stake_B'])
-                    if opp.get('extra_bookmaker'):
-                        bm.update(opp['extra_bookmaker'], -opp.get('extra_stake', 0.0))
-                    
-                    # Alerta Telegram (Sempre tentar enviar, mas só marcar se der certo)
-                    success = send_surebet_alert(opp)
-                    if success:
-                        surebet.alert_sent = True
-                        new_bets += 1
-                    else:
-                        logger.error(f"[Telegram] Falha ao enviar alerta para {opp['home_team']}")
+            for surebet_id, opportunity in pending_alerts:
+                _enqueue_surebet_alert(app, surebet_id, opportunity)
 
-            
-            db.session.commit()
             logger.info(
                 f"[Odds] Fonte={source} | {len(initial_opportunities)} detectadas | "
                 f"{len(confirmed_opportunities)} confirmadas | "
-                f"{new_bets} novas"
+                f"{new_bets} alertas agendados"
             )
         
         except Exception as e:
+            from app import db
             import traceback
+            db.session.rollback()
             traceback.print_exc()
             logger.error(f"[Odds] FALHOU: {e}")
 

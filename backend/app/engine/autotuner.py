@@ -7,6 +7,7 @@ from flask import current_app
 from sqlalchemy import text
 
 from app import db
+from src.edgehunter.core.decorators import SHORT_TX
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,7 @@ class AutoTuner:
             'stake_pct': stake_pct,
         }
 
+    @SHORT_TX(max_duration_ms=100)
     def _log_experiment(self, current_roi: float, bets_count: int, next_config: dict):
         db.session.execute(text("""
             CREATE TABLE IF NOT EXISTS autotuner_experiments (

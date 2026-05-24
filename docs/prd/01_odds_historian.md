@@ -3,6 +3,7 @@
 ## 1. Metadata
 - **ID**: PRD-01
 - **Status**: Accepted
+- **Aceito em**: 2026-05-23
 - **Owner**: Rafael
 - **Parent**: PRD-00
 - **Created**: 2026-05-14
@@ -626,7 +627,15 @@ Também era necessário fechar agora o tratamento de jogos cancelados/adiados po
 ### 9.2 Deferred Decisions
 - Cross-validation Pinnacle vs OddsPortal: manter o threshold de 10% na v1 e revisar depois conforme o `docs/decisions/deferred_decisions.md`.
 
-## 10. References
+## 10. Consequências
+
+Este PRD implica implementação de um layer persistente separado dos scrapers, com responsabilidade explícita por schema, sincronização temporal, health checks e retenção. O código não pode mais tratar a coleta como overwrite efêmero; ele precisa preservar snapshots completos, inclusive inválidos para análise, porque isso afeta debugging, treino e auditoria.
+
+No banco, a consequência é a existência de tabelas e índices voltados a leitura histórica e validação de qualidade, além de configuração SQLite com WAL e disciplina de concorrência curta. Em integração, PRD-02 e PRD-03 passam a depender diretamente dos contratos aqui definidos, como `match_id`, `valid_for_analysis`, `max_latency_seconds` e `scraper_health`.
+
+Operacionalmente, este PRD também obriga o projeto a manter backup, checkpoint de WAL e rotinas de health como parte do comportamento padrão do módulo. Sem isso, a coleta histórica fica correta no código, mas frágil demais para sustentar os módulos downstream em produção.
+
+## 11. References
 - ADR-001: Por que Poisson (PoissonModel consome dados aqui)
 - ADR-002: Pinnacle como benchmark (importante para cross-validation)
 - ADR-004: Por que SQLite

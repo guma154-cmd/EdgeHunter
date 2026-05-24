@@ -3,9 +3,10 @@
 | Metadados | Valor |
 |---|---|
 | **ID** | PRD-05 |
-| **Status** | Rascunho |
+| **Status** | Accepted |
+| **Aceito em** | 2026-05-23 |
 | **Responsável** | John (PM) |
-| **Pai** | [PRD-00: Pivot de Value Betting](00_value_betting_pivot.md) |
+| **Pai** | [PRD-00: Pivot de Value Betting](./00_master_value_betting.md) |
 | **Criado em** | 15/05/2026 |
 
 ---
@@ -176,7 +177,7 @@ Sem este módulo, o sistema gera insights, mas não possui a governança operaci
   - **Critério de Aceitação**:
     - Cobertura de testes > 85% em funções públicas.
     - **Testes Adversariais OBRIGATÓRIOS** (devem passar):
-      ` + "`" + `` + "`" + `` + "`" + `python
+      ```python
       def test_kelly_zero_when_negative_expected_value():
           """Kelly retorna 0 se EV < 0 (não apostar)"""
       
@@ -221,7 +222,7 @@ Sem este módulo, o sistema gera insights, mas não possui a governança operaci
       
       def test_dedup_within_alert_window():
           """Mesmo opp em 1h: apenas 1 alert"""
-      ` + "`" + `` + "`" + `` + "`" + `
+      ```
 
 ---
 
@@ -229,7 +230,7 @@ Sem este módulo, o sistema gera insights, mas não possui a governança operaci
 
 #### 5.1 Schema de Banco de Dados
 
-` + "`" + `` + "`" + `` + "`" + `sql
+```sql
 -- Apostas realizadas (manual tracking via Telegram callback)
 CREATE TABLE IF NOT EXISTS placed_bets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -311,11 +312,11 @@ CREATE TABLE IF NOT EXISTS bankroll_history (
     
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 #### 5.2 Contrato de API
 
-` + "`" + `` + "`" + `` + "`" + `python
+```python
 from typing import Optional, Dict, List, Literal
 from datetime import datetime
 
@@ -380,7 +381,7 @@ class TelegramCommands:
     async def handle_pause(self, message) -> None: ...
     async def handle_resume(self, message) -> None: ...
     async def handle_status(self, message) -> None: ...
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 #### 5.3 Templates Telegram (PT-BR)
 
@@ -450,7 +451,7 @@ Top Loss: {top_loss}
 
 #### 5.4 Pseudocódigo do Cycle Principal
 
-` + "`" + `` + "`" + `` + "`" + `python
+```python
 async def value_betting_cycle():
     """Job principal — roda a cada 15min após fetch_odds."""
     
@@ -510,7 +511,7 @@ async def value_betting_cycle():
         
         # 3f. Marcar como alerted
         value_detector.mark_as_alerted(opp['detection_id'])
-` + "`" + `` + "`" + `` + "`" + `
+```
 
 #### 5.5 Requisitos de Performance
 
@@ -552,19 +553,30 @@ async def value_betting_cycle():
 
 ---
 
-## 8. Questões em Aberto
+## 8. Decisions
 
-- Multi-bankroll por liga (separar Brasileirão de PL): valeria a pena?
-- Backup de bankroll_state em arquivo (proteção contra DB corruption)?
-- Comando Telegram /backtest para rodar análise histórica sob demanda?
-- Auto-resume após pause? (Ex: pause de 24h vira resume automaticamente)
-- Notificações via push (além de Telegram) — futuro?
+### 8.1 Deferred Decisions
+- Multi-bankroll por liga: adiado; default v1 com bankroll único.
+- Backup de `bankroll_state` em arquivo: adiado; default v1 depende do backup/restore do SQLite.
+- Comando Telegram `/backtest`: adiado; default v1 sem comando on-demand de backtest.
+- Auto-resume após pause: adiado; default v1 com `/resume` manual.
+- Notificações via push além de Telegram: adiado; default v1 usa Telegram apenas.
+
+As decisões deferidas estão consolidadas em [`docs/decisions/deferred_decisions.md`](../decisions/deferred_decisions.md).
 
 ---
 
-## 9. Referências
+## 9. Consequências
 
-- **Interna**: ADR-003: Estratégia híbrida (lógica + IA) — a ser criado.
+Este PRD transforma os módulos analíticos anteriores em um sistema operacional completo, o que altera diretamente scheduler, persistência, comandos Telegram e regras de negócio de bankroll. O código deixa de apenas detectar oportunidades e passa a manter estado financeiro, governança de fase, histórico de evolução e controles de proteção, tudo com comportamento default explícito.
+
+Na implementação, isso exige novas tabelas para bankroll, apostas realizadas e histórico de decisões, além de jobs periódicos que coexistem com o fluxo atual sem ampliar indevidamente a contenda SQLite. Também impõe contratos claros entre ValueDetector, GeminiValidator e a camada de alertas para que stake, deduplicação, pause/resume e circuit breaker funcionem sem ambiguidade.
+
+Como consequência arquitetural, o módulo passa a ser o ponto onde decisões financeiras são materializadas em comportamento de sistema. Qualquer mudança posterior em threshold, fases, Kelly, comandos ou aplicação automática de sugestões precisa preservar as garantias de auditabilidade, proteção de banca e previsibilidade operacional fechadas neste PRD.
+
+## 10. Referências
+
+- **Interna**: ADR-003: Estratégia híbrida (lógica + IA) — [ADR-003](../architecture/adr_003_hybrid_logic_ai.md).
 - **Externa**:
     - Kelly Criterion: Thorp, E. O. "The Kelly Criterion in Blackjack, Sports Betting, and the Stock Market"
     - PRD-00 Section 11.1 Gap 5: Bankroll híbrido

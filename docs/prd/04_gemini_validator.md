@@ -4,6 +4,7 @@
 |---|---|
 | **ID** | PRD-04 |
 | **Status** | Accepted |
+| **Aceito em** | 2026-05-23 |
 | **Responsável** | John (PM) |
 | **Pai** | [PRD-00: Pivot de Value Betting](./00_master_value_betting.md) |
 | **Criado em** | 15/05/2026 |
@@ -534,7 +535,15 @@ As decisões deferidas estão consolidadas em [`docs/decisions/deferred_decision
 
 ---
 
-## 9. Referências
+## 9. Consequências
+
+Este PRD introduz uma camada de IA explicitamente subordinada ao fluxo determinístico do produto, o que muda o código em dois eixos: integração resiliente com um provedor externo e persistência detalhada das respostas para auditoria. O backend passa a precisar de clientes com timeout, retry, parser robusto, fallback seguro e controle de consumo de tokens como parte do comportamento padrão, não como hardening opcional.
+
+No banco e nas integrações, a consequência é a criação de tabelas próprias para validações, anomalias, sugestões e orçamento mensal de tokens. Isso permite que PRD-05 consuma sinais da IA com rastreabilidade, ao mesmo tempo em que impede que falhas do provedor derrubem o pipeline principal de detecção e alerta.
+
+Também fica definido que a IA atua como revisora contextual e mecanismo de observabilidade, não como fonte primária de verdade do sistema. Essa decisão restringe o design do código: toda chamada ao Gemini deve poder falhar sem quebrar contratos downstream e sem remover a capacidade do sistema de continuar operando em modo degradado.
+
+## 10. Referências
 
 - **Interna**:
     - ADR-003: Estratégia híbrida (lógica + IA) — [ADR-003](../architecture/adr_003_hybrid_logic_ai.md).

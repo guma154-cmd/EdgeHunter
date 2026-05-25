@@ -75,6 +75,22 @@ class OddsHistorian:
             return None
         return datetime.fromisoformat(value)
 
+    @staticmethod
+    def _validate_non_negative_goal_count(value: int, field_name: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{field_name} must be an integer")
+        if value < 0:
+            raise ValueError(f"{field_name} must be >= 0")
+        return value
+
+    @staticmethod
+    def _compute_match_result(home_goals: int, away_goals: int) -> str:
+        if home_goals > away_goals:
+            return "home_win"
+        if home_goals < away_goals:
+            return "away_win"
+        return "draw"
+
     def _validate_snapshot_payload(
         self,
         match_id: str,
@@ -310,6 +326,134 @@ class OddsHistorian:
             return int(cursor.lastrowid)
         finally:
             write_connection.close()
+
+    @SHORT_TX(max_duration_ms=100)
+    def update_match_result(
+        self,
+        match_id: str,
+        home_goals: int,
+        away_goals: int,
+    ) -> None:
+        match_id_clean = self._validate_required_text(match_id, "match_id")
+        home_goals_clean = self._validate_non_negative_goal_count(home_goals, "home_goals")
+        away_goals_clean = self._validate_non_negative_goal_count(away_goals, "away_goals")
+        result = self._compute_match_result(home_goals_clean, away_goals_clean)
+
+        connection = self._connect()
+        try:
+            self._validate_match_exists(connection, match_id_clean)
+            connection.execute(
+                """
+                UPDATE matches
+                SET
+                    home_goals = ?,
+                    away_goals = ?,
+                    result = ?,
+                    status = 'finished',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE match_id = ?
+                """,
+                (
+                    home_goals_clean,
+                    away_goals_clean,
+                    result,
+                    match_id_clean,
+                ),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def get_finished_matches_with_last_odds(
+        self,
+        valid_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        valid_clause = "AND s.valid_for_analysis = 1" if valid_only else ""
+        connection = self._connect()
+        connection.row_factory = sqlite3.Row
+        try:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    m.match_id,
+                    m.home_team,
+                    m.away_team,
+                    m.league,
+                    m.match_date,
+                    m.home_goals,
+                    m.away_goals,
+                    m.result,
+                    s.id AS snapshot_id,
+                    s.pinnacle_home,
+                    s.pinnacle_draw,
+                    s.pinnacle_away,
+                    s.bet365_home,
+                    s.bet365_draw,
+                    s.bet365_away,
+                    s.betano_home,
+                    s.betano_draw,
+                    s.betano_away,
+                    s.oddsportal_avg_home,
+                    s.oddsportal_avg_draw,
+                    s.oddsportal_avg_away,
+                    s.bookmakers_synced,
+                    s.valid_for_analysis,
+                    s.snapshot_timestamp,
+                    s.max_latency_seconds
+                FROM matches AS m
+                JOIN odds_snapshots AS s
+                    ON s.id = (
+                        SELECT s2.id
+                        FROM odds_snapshots AS s2
+                        WHERE
+                            s2.match_id = m.match_id
+                            {valid_clause}
+                        ORDER BY s2.snapshot_timestamp DESC, s2.id DESC
+                        LIMIT 1
+                    )
+                WHERE
+                    m.status = 'finished'
+                    AND m.home_goals IS NOT NULL
+                    AND m.away_goals IS NOT NULL
+                    AND m.result IS NOT NULL
+                ORDER BY m.match_date ASC, m.match_id ASC
+                """
+            ).fetchall()
+        finally:
+            connection.close()
+
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            results.append(
+                {
+                    "match_id": row["match_id"],
+                    "home_team": row["home_team"],
+                    "away_team": row["away_team"],
+                    "league": row["league"],
+                    "scheduled_time": datetime.fromisoformat(row["match_date"]),
+                    "home_goals": int(row["home_goals"]),
+                    "away_goals": int(row["away_goals"]),
+                    "result": row["result"],
+                    "snapshot_id": int(row["snapshot_id"]),
+                    "pinnacle_home": row["pinnacle_home"],
+                    "pinnacle_draw": row["pinnacle_draw"],
+                    "pinnacle_away": row["pinnacle_away"],
+                    "bet365_home": row["bet365_home"],
+                    "bet365_draw": row["bet365_draw"],
+                    "bet365_away": row["bet365_away"],
+                    "betano_home": row["betano_home"],
+                    "betano_draw": row["betano_draw"],
+                    "betano_away": row["betano_away"],
+                    "oddsportal_avg_home": row["oddsportal_avg_home"],
+                    "oddsportal_avg_draw": row["oddsportal_avg_draw"],
+                    "oddsportal_avg_away": row["oddsportal_avg_away"],
+                    "bookmakers_synced": json.loads(row["bookmakers_synced"]),
+                    "valid_for_analysis": bool(row["valid_for_analysis"]),
+                    "last_snapshot_at": datetime.fromisoformat(row["snapshot_timestamp"]),
+                    "max_latency_seconds": row["max_latency_seconds"],
+                }
+            )
+        return results
 
     def _read_latest_scraper_timestamps(
         self,

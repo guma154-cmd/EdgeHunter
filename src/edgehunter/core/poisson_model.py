@@ -17,6 +17,13 @@ DEFAULT_NEUTRAL_STRENGTH = 1.0
 PROBABILITY_TOLERANCE = 1e-9
 MIN_POSITIVE_STRENGTH = 1e-6
 INVALID_DATA_WARNING_THRESHOLD = 0.20
+DEFAULT_HOME_ADVANTAGE = 1.0
+DEFAULT_MAX_OPTIMIZATION_ITERATIONS = 250
+DEFAULT_OPTIMIZATION_TOLERANCE = 1e-6
+DEFAULT_REGULARIZATION_WEIGHT = 1e-4
+MIN_STEP_SIZE = 1e-8
+INITIAL_STEP_SIZE = 0.25
+GRADIENT_EPSILON = 1e-5
 
 
 def _require_non_empty_team(team: str) -> str:
@@ -62,6 +69,13 @@ def _read_record_field(record: Any, field_name: str) -> Any:
     return getattr(record, field_name, None)
 
 
+def _center(values: dict[str, float]) -> dict[str, float]:
+    if not values:
+        return {}
+    mean_value = sum(values.values()) / len(values)
+    return {key: value - mean_value for key, value in values.items()}
+
+
 @dataclass(frozen=True)
 class TeamStrength:
     attack: float
@@ -70,6 +84,34 @@ class TeamStrength:
     def __post_init__(self) -> None:
         object.__setattr__(self, "attack", _require_positive_finite(self.attack, "attack"))
         object.__setattr__(self, "defense", _require_positive_finite(self.defense, "defense"))
+
+
+@dataclass(frozen=True)
+class TrainingResult:
+    success: bool
+    method: str
+    matches_received: int
+    matches_used: int
+    teams_trained: int
+    negative_log_likelihood: float
+    iterations: int
+    home_advantage: float
+    warning: str | None = None
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "success": self.success,
+            "method": self.method,
+            "matches_received": self.matches_received,
+            "matches_used": self.matches_used,
+            "teams_trained": self.teams_trained,
+            "negative_log_likelihood": self.negative_log_likelihood,
+            "iterations": self.iterations,
+            "home_advantage": self.home_advantage,
+            "warning": self.warning,
+            "error": self.error,
+        }
 
 
 class PoissonModel:
@@ -101,10 +143,12 @@ class PoissonModel:
             attack=neutral_attack,
             defense=neutral_defense,
         )
+        self.home_advantage = _require_positive_finite(DEFAULT_HOME_ADVANTAGE, "home_advantage")
         self._team_strengths: dict[str, TeamStrength] = {}
         self.trained = False
         self.trained_league: str | None = None
         self.last_fit_summary: dict[str, Any] | None = None
+        self.last_training_result: TrainingResult | None = None
 
     @staticmethod
     def _normalize_training_match(record: Any) -> dict[str, Any]:
@@ -155,6 +199,255 @@ class PoissonModel:
             "valid_for_analysis": valid_for_analysis,
         }
 
+    @staticmethod
+    def _build_team_counts(matches: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = defaultdict(int)
+        for match in matches:
+            counts[match["home_team"]] += 1
+            counts[match["away_team"]] += 1
+        return counts
+
+    def _build_initial_strengths(
+        self,
+        matches: list[dict[str, Any]],
+        trainable_teams: list[str],
+    ) -> tuple[dict[str, float], dict[str, float]]:
+        home_scored: dict[str, int] = defaultdict(int)
+        home_scored_count: dict[str, int] = defaultdict(int)
+        away_scored: dict[str, int] = defaultdict(int)
+        away_scored_count: dict[str, int] = defaultdict(int)
+        home_conceded: dict[str, int] = defaultdict(int)
+        home_conceded_count: dict[str, int] = defaultdict(int)
+        away_conceded: dict[str, int] = defaultdict(int)
+        away_conceded_count: dict[str, int] = defaultdict(int)
+
+        for match in matches:
+            home_team = match["home_team"]
+            away_team = match["away_team"]
+            home_goals = match["home_goals"]
+            away_goals = match["away_goals"]
+
+            home_scored[home_team] += home_goals
+            home_scored_count[home_team] += 1
+            away_scored[away_team] += away_goals
+            away_scored_count[away_team] += 1
+            home_conceded[home_team] += away_goals
+            home_conceded_count[home_team] += 1
+            away_conceded[away_team] += home_goals
+            away_conceded_count[away_team] += 1
+
+        attack_strengths: dict[str, float] = {}
+        defense_strengths: dict[str, float] = {}
+        for team in trainable_teams:
+            attack_components: list[float] = []
+            defense_components: list[float] = []
+            if home_scored_count[team] > 0:
+                attack_components.append(
+                    _safe_relative_strength(
+                        home_scored[team] / home_scored_count[team],
+                        self.league_avg_home_goals,
+                    )
+                )
+            if away_scored_count[team] > 0:
+                attack_components.append(
+                    _safe_relative_strength(
+                        away_scored[team] / away_scored_count[team],
+                        self.league_avg_away_goals,
+                    )
+                )
+            if home_conceded_count[team] > 0:
+                defense_components.append(
+                    _safe_relative_strength(
+                        home_conceded[team] / home_conceded_count[team],
+                        self.league_avg_away_goals,
+                    )
+                )
+            if away_conceded_count[team] > 0:
+                defense_components.append(
+                    _safe_relative_strength(
+                        away_conceded[team] / away_conceded_count[team],
+                        self.league_avg_home_goals,
+                    )
+                )
+
+            attack_strengths[team] = math.log(max(_mean(attack_components), MIN_POSITIVE_STRENGTH))
+            defense_strengths[team] = math.log(max(_mean(defense_components), MIN_POSITIVE_STRENGTH))
+
+        return _center(attack_strengths), _center(defense_strengths)
+
+    @staticmethod
+    def _pack_params(
+        home_advantage_log: float,
+        attack_logs: dict[str, float],
+        defense_logs: dict[str, float],
+        teams: list[str],
+    ) -> list[float]:
+        params = [home_advantage_log]
+        params.extend(attack_logs[team] for team in teams)
+        params.extend(defense_logs[team] for team in teams)
+        return params
+
+    @staticmethod
+    def _unpack_params(
+        params: list[float],
+        teams: list[str],
+    ) -> tuple[float, dict[str, float], dict[str, float]]:
+        team_count = len(teams)
+        home_advantage_log = float(params[0])
+        attack_logs = {
+            team: float(params[index + 1])
+            for index, team in enumerate(teams)
+        }
+        defense_logs = {
+            team: float(params[index + 1 + team_count])
+            for index, team in enumerate(teams)
+        }
+        return home_advantage_log, _center(attack_logs), _center(defense_logs)
+
+    def _calculate_match_lambdas_from_logs(
+        self,
+        *,
+        match: dict[str, Any],
+        home_advantage_log: float,
+        attack_logs: dict[str, float],
+        defense_logs: dict[str, float],
+    ) -> tuple[float, float]:
+        home_attack_log = attack_logs.get(match["home_team"], 0.0)
+        away_attack_log = attack_logs.get(match["away_team"], 0.0)
+        home_defense_log = defense_logs.get(match["home_team"], 0.0)
+        away_defense_log = defense_logs.get(match["away_team"], 0.0)
+
+        home_lambda_log = (
+            math.log(self.league_avg_home_goals)
+            + home_advantage_log
+            + home_attack_log
+            + away_defense_log
+        )
+        away_lambda_log = (
+            math.log(self.league_avg_away_goals)
+            + away_attack_log
+            + home_defense_log
+        )
+        home_lambda = math.exp(home_lambda_log)
+        away_lambda = math.exp(away_lambda_log)
+        return (
+            _require_positive_finite(home_lambda, "home_lambda"),
+            _require_positive_finite(away_lambda, "away_lambda"),
+        )
+
+    def negative_log_likelihood(
+        self,
+        params: list[float],
+        matches: list[dict[str, Any]],
+        teams: list[str],
+    ) -> float:
+        home_advantage_log, attack_logs, defense_logs = self._unpack_params(params, teams)
+        total = 0.0
+        for match in matches:
+            home_lambda, away_lambda = self._calculate_match_lambdas_from_logs(
+                match=match,
+                home_advantage_log=home_advantage_log,
+                attack_logs=attack_logs,
+                defense_logs=defense_logs,
+            )
+            total += home_lambda - (match["home_goals"] * math.log(home_lambda)) + math.lgamma(
+                match["home_goals"] + 1
+            )
+            total += away_lambda - (match["away_goals"] * math.log(away_lambda)) + math.lgamma(
+                match["away_goals"] + 1
+            )
+
+        regularization = DEFAULT_REGULARIZATION_WEIGHT * sum(
+            value * value for value in params[1:]
+        )
+        nll = total + regularization
+        if not math.isfinite(nll):
+            raise ValueError("negative_log_likelihood produced a non-finite result")
+        return nll
+
+    def _compute_gradient(
+        self,
+        params: list[float],
+        matches: list[dict[str, Any]],
+        teams: list[str],
+    ) -> list[float]:
+        gradient: list[float] = []
+        for index in range(len(params)):
+            plus_params = list(params)
+            minus_params = list(params)
+            plus_params[index] += GRADIENT_EPSILON
+            minus_params[index] -= GRADIENT_EPSILON
+            plus_value = self.negative_log_likelihood(plus_params, matches, teams)
+            minus_value = self.negative_log_likelihood(minus_params, matches, teams)
+            gradient.append((plus_value - minus_value) / (2 * GRADIENT_EPSILON))
+        return gradient
+
+    def _optimize_mle(
+        self,
+        params: list[float],
+        matches: list[dict[str, Any]],
+        teams: list[str],
+    ) -> tuple[list[float], float, int, bool, str | None]:
+        best_params = list(params)
+        best_nll = self.negative_log_likelihood(best_params, matches, teams)
+
+        for iteration in range(1, DEFAULT_MAX_OPTIMIZATION_ITERATIONS + 1):
+            gradient = self._compute_gradient(best_params, matches, teams)
+            gradient_norm = math.sqrt(sum(value * value for value in gradient))
+            if gradient_norm <= DEFAULT_OPTIMIZATION_TOLERANCE:
+                return best_params, best_nll, iteration, True, None
+
+            normalized_gradient = [value / max(gradient_norm, MIN_POSITIVE_STRENGTH) for value in gradient]
+            step_size = INITIAL_STEP_SIZE
+            improved = False
+
+            while step_size >= MIN_STEP_SIZE:
+                candidate = [
+                    param - (step_size * direction)
+                    for param, direction in zip(best_params, normalized_gradient, strict=True)
+                ]
+                candidate_nll = self.negative_log_likelihood(candidate, matches, teams)
+                if candidate_nll + DEFAULT_OPTIMIZATION_TOLERANCE < best_nll:
+                    best_params = candidate
+                    best_nll = candidate_nll
+                    improved = True
+                    break
+                step_size /= 2.0
+
+            if not improved:
+                warning = "optimizer stopped after failing to improve the objective"
+                return best_params, best_nll, iteration, True, warning
+
+        return (
+            best_params,
+            best_nll,
+            DEFAULT_MAX_OPTIMIZATION_ITERATIONS,
+            True,
+            "optimizer reached max iterations before hitting tolerance",
+        )
+
+    def _apply_trained_parameters(
+        self,
+        *,
+        params: list[float],
+        teams: list[str],
+        all_teams: list[str],
+        min_matches_per_team: int,
+        team_counts: dict[str, int],
+    ) -> None:
+        home_advantage_log, attack_logs, defense_logs = self._unpack_params(params, teams)
+        self.home_advantage = math.exp(home_advantage_log)
+        self._team_strengths = {}
+        for team in all_teams:
+            if team_counts[team] < min_matches_per_team:
+                self._team_strengths[team] = self.neutral_strength
+                continue
+
+            self._team_strengths[team] = TeamStrength(
+                attack=math.exp(attack_logs.get(team, 0.0)),
+                defense=math.exp(defense_logs.get(team, 0.0)),
+            )
+
     def fit(
         self,
         matches: list[Any],
@@ -196,90 +489,56 @@ class PoissonModel:
         self.league_avg_home_goals = max(total_home_goals / total_matches, MIN_POSITIVE_STRENGTH)
         self.league_avg_away_goals = max(total_away_goals / total_matches, MIN_POSITIVE_STRENGTH)
 
-        appearances: dict[str, int] = defaultdict(int)
-        home_scored: dict[str, int] = defaultdict(int)
-        home_scored_count: dict[str, int] = defaultdict(int)
-        away_scored: dict[str, int] = defaultdict(int)
-        away_scored_count: dict[str, int] = defaultdict(int)
-        home_conceded: dict[str, int] = defaultdict(int)
-        home_conceded_count: dict[str, int] = defaultdict(int)
-        away_conceded: dict[str, int] = defaultdict(int)
-        away_conceded_count: dict[str, int] = defaultdict(int)
+        team_counts = self._build_team_counts(training_matches)
+        all_teams = sorted(team_counts)
+        trainable_teams = sorted(
+            team for team, count in team_counts.items() if count >= min_matches_per_team
+        )
+        if not trainable_teams:
+            raise ValueError("no teams meet min_matches_per_team for MLE training")
 
-        for match in training_matches:
-            home_team = match["home_team"]
-            away_team = match["away_team"]
-            home_goals = match["home_goals"]
-            away_goals = match["away_goals"]
-
-            appearances[home_team] += 1
-            appearances[away_team] += 1
-
-            home_scored[home_team] += home_goals
-            home_scored_count[home_team] += 1
-            away_scored[away_team] += away_goals
-            away_scored_count[away_team] += 1
-
-            home_conceded[home_team] += away_goals
-            home_conceded_count[home_team] += 1
-            away_conceded[away_team] += home_goals
-            away_conceded_count[away_team] += 1
-
-        team_strengths: dict[str, TeamStrength] = {}
-        for team, match_count in appearances.items():
-            if match_count < min_matches_per_team:
-                team_strengths[team] = self.neutral_strength
-                continue
-
-            attack_components: list[float] = []
-            defense_components: list[float] = []
-
-            if home_scored_count[team] > 0:
-                attack_components.append(
-                    _safe_relative_strength(
-                        home_scored[team] / home_scored_count[team],
-                        self.league_avg_home_goals,
-                    )
-                )
-            if away_scored_count[team] > 0:
-                attack_components.append(
-                    _safe_relative_strength(
-                        away_scored[team] / away_scored_count[team],
-                        self.league_avg_away_goals,
-                    )
-                )
-
-            if home_conceded_count[team] > 0:
-                defense_components.append(
-                    _safe_relative_strength(
-                        home_conceded[team] / home_conceded_count[team],
-                        self.league_avg_away_goals,
-                    )
-                )
-            if away_conceded_count[team] > 0:
-                defense_components.append(
-                    _safe_relative_strength(
-                        away_conceded[team] / away_conceded_count[team],
-                        self.league_avg_home_goals,
-                    )
-                )
-
-            team_strengths[team] = TeamStrength(
-                attack=_mean(attack_components),
-                defense=_mean(defense_components),
-            )
-
-        self._team_strengths = team_strengths
+        initial_attack_logs, initial_defense_logs = self._build_initial_strengths(
+            training_matches,
+            trainable_teams,
+        )
+        initial_params = self._pack_params(
+            home_advantage_log=0.0,
+            attack_logs=initial_attack_logs,
+            defense_logs=initial_defense_logs,
+            teams=trainable_teams,
+        )
+        params, negative_log_likelihood, iterations, success, warning = self._optimize_mle(
+            initial_params,
+            training_matches,
+            trainable_teams,
+        )
+        self._apply_trained_parameters(
+            params=params,
+            teams=trainable_teams,
+            all_teams=all_teams,
+            min_matches_per_team=min_matches_per_team,
+            team_counts=team_counts,
+        )
         self.trained = True
         self.trained_league = trained_league
+        self.last_training_result = TrainingResult(
+            success=success,
+            method="MLE-STDlib",
+            matches_received=len(normalized_matches),
+            matches_used=total_matches,
+            teams_trained=len(trainable_teams),
+            negative_log_likelihood=negative_log_likelihood,
+            iterations=iterations,
+            home_advantage=self.home_advantage,
+            warning=warning,
+            error=None,
+        )
         self.last_fit_summary = {
             "league": trained_league,
-            "matches_received": len(normalized_matches),
-            "matches_used": total_matches,
-            "matches_filtered_invalid": len(normalized_matches) - total_matches,
+            **self.last_training_result.to_dict(),
             "league_avg_home_goals": self.league_avg_home_goals,
             "league_avg_away_goals": self.league_avg_away_goals,
-            "teams_trained": len(team_strengths),
+            "matches_filtered_invalid": len(normalized_matches) - total_matches,
             "min_matches_per_team": min_matches_per_team,
             "valid_only": valid_only,
         }
@@ -315,7 +574,10 @@ class PoissonModel:
         away_strength = self.get_team_strength(away_team)
 
         expected_home_goals = (
-            self.league_avg_home_goals * home_strength.attack * away_strength.defense
+            self.league_avg_home_goals
+            * self.home_advantage
+            * home_strength.attack
+            * away_strength.defense
         )
         expected_away_goals = (
             self.league_avg_away_goals * away_strength.attack * home_strength.defense

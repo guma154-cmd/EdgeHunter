@@ -114,6 +114,22 @@ class TrainingResult:
         }
 
 
+@dataclass(frozen=True)
+class SanityCheckResult:
+    passed: bool
+    reasons: list[str]
+    warnings: list[str]
+    metrics: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "passed": self.passed,
+            "reasons": list(self.reasons),
+            "warnings": list(self.warnings),
+            "metrics": dict(self.metrics),
+        }
+
+
 class PoissonModel:
     """In-memory Poisson model with explicit team strengths and 1X2 inference."""
 
@@ -650,6 +666,159 @@ class PoissonModel:
             "draw": prediction["draw"],
             "away_win": prediction["away_win"],
         }
+
+    def _build_sanity_metrics(self) -> dict[str, Any]:
+        training_result = self.last_training_result
+        metrics: dict[str, Any] = {
+            "trained": self.trained,
+            "home_advantage": self.home_advantage,
+            "teams_with_explicit_strength": len(self._team_strengths),
+        }
+        if training_result is None:
+            return metrics
+
+        metrics.update(
+            {
+                "training_success": training_result.success,
+                "negative_log_likelihood": training_result.negative_log_likelihood,
+                "matches_received": training_result.matches_received,
+                "matches_used": training_result.matches_used,
+                "teams_trained": training_result.teams_trained,
+                "training_iterations": training_result.iterations,
+                "optimizer_warning": training_result.warning,
+            }
+        )
+        return metrics
+
+    def _append_strength_reasons(
+        self,
+        reasons: list[str],
+        metrics: dict[str, Any],
+    ) -> None:
+        invalid_teams: list[str] = []
+        for team, strength in sorted(self._team_strengths.items()):
+            if not math.isfinite(strength.attack) or strength.attack <= 0:
+                invalid_teams.append(team)
+            if not math.isfinite(strength.defense) or strength.defense <= 0:
+                invalid_teams.append(team)
+
+        metrics["invalid_strength_teams"] = invalid_teams
+        if invalid_teams:
+            reasons.append("team strengths must be finite and > 0")
+
+    def _select_canary_matchup(self) -> tuple[str, str, bool]:
+        trained_teams = sorted(self._team_strengths.items())
+        if len(trained_teams) < 2:
+            return "__sanity_home__", "__sanity_away__", True
+
+        strongest_team = max(
+            trained_teams,
+            key=lambda item: (item[1].attack, -item[1].defense, item[0]),
+        )[0]
+        weakest_team = min(
+            trained_teams,
+            key=lambda item: (item[1].attack, -item[1].defense, item[0]),
+        )[0]
+        if weakest_team == strongest_team:
+            alternatives = [team for team, _ in trained_teams if team != strongest_team]
+            weakest_team = alternatives[0] if alternatives else "__sanity_away__"
+
+        return strongest_team, weakest_team, False
+
+    @staticmethod
+    def _validate_canary_probabilities(
+        prediction: Mapping[str, Any],
+        reasons: list[str],
+        metrics: dict[str, Any],
+    ) -> None:
+        probability_values: dict[str, float] = {}
+        for field_name in ("home_win", "draw", "away_win"):
+            value = float(prediction[field_name])
+            probability_values[field_name] = value
+            metrics[f"canary_{field_name}"] = value
+            if not math.isfinite(value):
+                reasons.append(f"canary probability {field_name} must be finite")
+                continue
+            if value < 0 or value > 1:
+                reasons.append(f"canary probability {field_name} must be between 0 and 1")
+
+        probability_sum = sum(probability_values.values())
+        metrics["canary_probability_sum"] = probability_sum
+        if not math.isfinite(probability_sum) or abs(probability_sum - 1.0) > 1e-6:
+            reasons.append("canary probabilities must sum to approximately 1")
+
+    def sanity_check(self) -> SanityCheckResult:
+        reasons: list[str] = []
+        warnings_list: list[str] = []
+        metrics = self._build_sanity_metrics()
+
+        if not self.trained:
+            reasons.append("model must be trained before sanity_check")
+        if self.last_training_result is None:
+            reasons.append("last_training_result is required before sanity_check")
+
+        training_result = self.last_training_result
+        if training_result is not None:
+            if training_result.success is not True:
+                reasons.append("last_training_result.success must be True")
+            if training_result.warning:
+                reasons.append("optimizer warning is treated as a critical sanity failure")
+                warnings_list.append(training_result.warning)
+            if not math.isfinite(training_result.negative_log_likelihood):
+                reasons.append("negative_log_likelihood must be finite")
+            if training_result.matches_used < 2:
+                warnings_list.append(
+                    "dataset is very small; sanity check used a fallback canary path",
+                )
+
+        if not math.isfinite(self.home_advantage) or self.home_advantage <= 0:
+            reasons.append("home_advantage must be finite and > 0")
+
+        self._append_strength_reasons(reasons, metrics)
+
+        canary_home_team, canary_away_team, used_synthetic_canary = self._select_canary_matchup()
+        metrics["canary_home_team"] = canary_home_team
+        metrics["canary_away_team"] = canary_away_team
+        metrics["used_synthetic_canary"] = used_synthetic_canary
+
+        if used_synthetic_canary:
+            warnings_list.append("trained team set too small; using synthetic neutral canary")
+
+        try:
+            expected = self.calculate_expected_goals(
+                home_team=canary_home_team,
+                away_team=canary_away_team,
+            )
+            prediction = self.predict_match(
+                home_team=canary_home_team,
+                away_team=canary_away_team,
+            )
+        except Exception as exc:
+            reasons.append(f"canary prediction failed: {exc}")
+        else:
+            metrics["canary_home_lambda"] = expected["expected_home_goals"]
+            metrics["canary_away_lambda"] = expected["expected_away_goals"]
+            if not math.isfinite(expected["expected_home_goals"]) or expected["expected_home_goals"] <= 0:
+                reasons.append("canary home lambda must be finite and > 0")
+            if not math.isfinite(expected["expected_away_goals"]) or expected["expected_away_goals"] <= 0:
+                reasons.append("canary away lambda must be finite and > 0")
+
+            self._validate_canary_probabilities(prediction, reasons, metrics)
+
+            plausible_signal = (
+                prediction["home_win"] > prediction["away_win"]
+                and expected["expected_home_goals"] > expected["expected_away_goals"]
+            )
+            metrics["canary_plausible_strength_signal"] = plausible_signal
+            if not used_synthetic_canary and not plausible_signal:
+                reasons.append("strong-vs-weak canary prediction is not plausible")
+
+        return SanityCheckResult(
+            passed=not reasons,
+            reasons=reasons,
+            warnings=warnings_list,
+            metrics=metrics,
+        )
 
     @staticmethod
     def _normalize_probabilities(

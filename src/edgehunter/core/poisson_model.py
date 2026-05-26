@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import json
 import math
+from pathlib import Path
 from typing import Any, Mapping
 import warnings
 
 
+MODEL_SCHEMA_VERSION = 1
+MODEL_VERSION = "poisson-mle-stdlib-v1"
 MIN_MAX_GOALS = 3
 DEFAULT_MAX_GOALS = 10
 DEFAULT_LEAGUE_AVG_HOME_GOALS = 1.40
@@ -24,6 +29,143 @@ DEFAULT_REGULARIZATION_WEIGHT = 1e-4
 MIN_STEP_SIZE = 1e-8
 INITIAL_STEP_SIZE = 0.25
 GRADIENT_EPSILON = 1e-5
+
+_PERSISTENCE_REQUIRED_FIELDS = frozenset(
+    {
+        "schema_version",
+        "model_version",
+        "created_at",
+        "saved_at",
+        "league_avg_home_goals",
+        "league_avg_away_goals",
+        "home_advantage",
+        "max_goals",
+        "neutral_strength",
+        "trained",
+        "trained_league",
+        "team_strengths",
+        "last_training_result",
+    }
+)
+_TRAINING_RESULT_REQUIRED_FIELDS = frozenset(
+    {
+        "success",
+        "method",
+        "matches_received",
+        "matches_used",
+        "teams_trained",
+        "negative_log_likelihood",
+        "iterations",
+        "home_advantage",
+        "warning",
+        "error",
+    }
+)
+_STRENGTH_REQUIRED_FIELDS = frozenset({"attack", "defense"})
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"invalid JSON numeric constant: {value}")
+
+
+def _require_mapping_payload(value: Any, field_name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+    return value
+
+
+def _require_required_fields(
+    payload: Mapping[str, Any],
+    required_fields: frozenset[str],
+    field_name: str,
+) -> None:
+    missing_fields = sorted(required_fields.difference(payload))
+    if missing_fields:
+        raise ValueError(f"missing required field: {missing_fields[0]}")
+
+
+def _require_bool(value: Any, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a boolean")
+    return value
+
+
+def _require_non_empty_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
+
+
+def _require_optional_string(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string or null")
+    return value
+
+
+def _require_optional_non_empty_string(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _require_non_empty_string(value, field_name)
+
+
+def _require_iso_datetime_string(value: Any, field_name: str) -> str:
+    timestamp = _require_non_empty_string(value, field_name)
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO datetime") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field_name} must include timezone")
+    return timestamp
+
+
+def _require_json_number(value: Any, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{field_name} must be finite")
+    return number
+
+
+def _require_non_negative_finite(value: Any, field_name: str) -> float:
+    number = _require_json_number(value, field_name)
+    if number < 0:
+        raise ValueError(f"{field_name} must be >= 0")
+    return number
+
+
+def _require_positive_json_number(value: Any, field_name: str) -> float:
+    number = _require_json_number(value, field_name)
+    if number <= 0:
+        raise ValueError(f"{field_name} must be > 0")
+    return number
+
+
+def _reject_non_finite_json_values(value: Any, field_name: str) -> None:
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if isinstance(value, (int, float)):
+        if not math.isfinite(float(value)):
+            raise ValueError(f"{field_name} contains a non-finite value")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_non_finite_json_values(item, f"{field_name}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"{field_name} contains a non-string object key")
+            _reject_non_finite_json_values(item, f"{field_name}.{key}")
+        return
+    raise ValueError(f"{field_name} contains an unsupported value type")
 
 
 def _require_non_empty_team(team: str) -> str:
@@ -114,6 +256,55 @@ class TrainingResult:
         }
 
 
+def _training_result_from_payload(payload: Any) -> TrainingResult:
+    result_payload = _require_mapping_payload(payload, "last_training_result")
+    _require_required_fields(
+        result_payload,
+        _TRAINING_RESULT_REQUIRED_FIELDS,
+        "last_training_result",
+    )
+
+    return TrainingResult(
+        success=_require_bool(result_payload["success"], "last_training_result.success"),
+        method=_require_non_empty_string(
+            result_payload["method"],
+            "last_training_result.method",
+        ),
+        matches_received=_require_non_negative_integer(
+            result_payload["matches_received"],
+            "last_training_result.matches_received",
+        ),
+        matches_used=_require_non_negative_integer(
+            result_payload["matches_used"],
+            "last_training_result.matches_used",
+        ),
+        teams_trained=_require_non_negative_integer(
+            result_payload["teams_trained"],
+            "last_training_result.teams_trained",
+        ),
+        negative_log_likelihood=_require_non_negative_finite(
+            result_payload["negative_log_likelihood"],
+            "last_training_result.negative_log_likelihood",
+        ),
+        iterations=_require_non_negative_integer(
+            result_payload["iterations"],
+            "last_training_result.iterations",
+        ),
+        home_advantage=_require_positive_json_number(
+            result_payload["home_advantage"],
+            "last_training_result.home_advantage",
+        ),
+        warning=_require_optional_string(
+            result_payload["warning"],
+            "last_training_result.warning",
+        ),
+        error=_require_optional_string(
+            result_payload["error"],
+            "last_training_result.error",
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class SanityCheckResult:
     passed: bool
@@ -159,6 +350,8 @@ class PoissonModel:
             attack=neutral_attack,
             defense=neutral_defense,
         )
+        self.created_at = _utc_now_iso()
+        self.saved_at: str | None = None
         self.home_advantage = _require_positive_finite(DEFAULT_HOME_ADVANTAGE, "home_advantage")
         self._team_strengths: dict[str, TeamStrength] = {}
         self.trained = False
@@ -559,6 +752,193 @@ class PoissonModel:
             "valid_only": valid_only,
         }
         return dict(self.last_fit_summary)
+
+    def _to_persistence_payload(self, *, saved_at: str) -> dict[str, Any]:
+        if self.last_training_result is None:
+            raise ValueError("last_training_result is required before save")
+
+        team_strengths = {
+            team: {
+                "attack": strength.attack,
+                "defense": strength.defense,
+            }
+            for team, strength in sorted(self._team_strengths.items())
+        }
+        return {
+            "schema_version": MODEL_SCHEMA_VERSION,
+            "model_version": MODEL_VERSION,
+            "created_at": self.created_at,
+            "saved_at": saved_at,
+            "league_avg_home_goals": self.league_avg_home_goals,
+            "league_avg_away_goals": self.league_avg_away_goals,
+            "home_advantage": self.home_advantage,
+            "max_goals": self.max_goals,
+            "neutral_strength": {
+                "attack": self.neutral_strength.attack,
+                "defense": self.neutral_strength.defense,
+            },
+            "trained": self.trained,
+            "trained_league": self.trained_league,
+            "team_strengths": team_strengths,
+            "last_training_result": self.last_training_result.to_dict(),
+            "last_fit_summary": self.last_fit_summary,
+        }
+
+    def save(self, path: str | Path) -> None:
+        if not self.trained:
+            raise ValueError("trained model is required before save")
+
+        saved_at = _utc_now_iso()
+        payload = self._to_persistence_payload(saved_at=saved_at)
+        _reject_non_finite_json_values(payload, "model")
+        serialized = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        output_path = Path(path)
+        temporary_path = output_path.with_name(f"{output_path.name}.tmp")
+        temporary_path.write_text(f"{serialized}\n", encoding="utf-8")
+        temporary_path.replace(output_path)
+        self.saved_at = saved_at
+
+    @staticmethod
+    def _team_strengths_from_payload(payload: Any) -> dict[str, TeamStrength]:
+        strengths_payload = _require_mapping_payload(payload, "team_strengths")
+        strengths: dict[str, TeamStrength] = {}
+        for raw_team, raw_strength in strengths_payload.items():
+            team = _require_non_empty_team(raw_team)
+            if team in strengths:
+                raise ValueError(f"duplicate normalized team in team_strengths: {team}")
+            strength_payload = _require_mapping_payload(
+                raw_strength,
+                f"team_strengths.{team}",
+            )
+            _require_required_fields(
+                strength_payload,
+                _STRENGTH_REQUIRED_FIELDS,
+                f"team_strengths.{team}",
+            )
+            attack = _require_positive_json_number(
+                strength_payload["attack"],
+                f"team_strengths.{team}.attack",
+            )
+            defense = _require_positive_json_number(
+                strength_payload["defense"],
+                f"team_strengths.{team}.defense",
+            )
+            strengths[team] = TeamStrength(attack=attack, defense=defense)
+        return strengths
+
+    @classmethod
+    def _from_persistence_payload(cls, payload: Any) -> PoissonModel:
+        model_payload = _require_mapping_payload(payload, "model")
+        _reject_non_finite_json_values(model_payload, "model")
+        _require_required_fields(model_payload, _PERSISTENCE_REQUIRED_FIELDS, "model")
+
+        schema_version = _require_non_negative_integer(
+            model_payload["schema_version"],
+            "schema_version",
+        )
+        if schema_version != MODEL_SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported PoissonModel schema_version: {schema_version}",
+            )
+
+        model_version = _require_non_empty_string(model_payload["model_version"], "model_version")
+        if model_version != MODEL_VERSION:
+            raise ValueError(f"unsupported PoissonModel model_version: {model_version}")
+
+        created_at = _require_iso_datetime_string(model_payload["created_at"], "created_at")
+        saved_at = _require_iso_datetime_string(model_payload["saved_at"], "saved_at")
+        trained = _require_bool(model_payload["trained"], "trained")
+        trained_league = _require_optional_non_empty_string(
+            model_payload["trained_league"],
+            "trained_league",
+        )
+        if trained and trained_league is None:
+            raise ValueError("trained_league is required when trained is true")
+
+        max_goals = _require_non_negative_integer(model_payload["max_goals"], "max_goals")
+        if max_goals < MIN_MAX_GOALS:
+            raise ValueError(f"max_goals must be >= {MIN_MAX_GOALS}")
+
+        neutral_payload = _require_mapping_payload(
+            model_payload["neutral_strength"],
+            "neutral_strength",
+        )
+        _require_required_fields(neutral_payload, _STRENGTH_REQUIRED_FIELDS, "neutral_strength")
+        neutral_attack = _require_positive_json_number(
+            neutral_payload["attack"],
+            "neutral_strength.attack",
+        )
+        neutral_defense = _require_positive_json_number(
+            neutral_payload["defense"],
+            "neutral_strength.defense",
+        )
+
+        home_advantage = _require_positive_json_number(
+            model_payload["home_advantage"],
+            "home_advantage",
+        )
+        training_result = _training_result_from_payload(model_payload["last_training_result"])
+        if not math.isclose(
+            training_result.home_advantage,
+            home_advantage,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise ValueError("last_training_result.home_advantage must match home_advantage")
+
+        team_strengths = cls._team_strengths_from_payload(model_payload["team_strengths"])
+        if trained and not team_strengths:
+            raise ValueError("team_strengths must not be empty when trained is true")
+
+        model = cls(
+            league_avg_home_goals=_require_positive_json_number(
+                model_payload["league_avg_home_goals"],
+                "league_avg_home_goals",
+            ),
+            league_avg_away_goals=_require_positive_json_number(
+                model_payload["league_avg_away_goals"],
+                "league_avg_away_goals",
+            ),
+            max_goals=max_goals,
+            neutral_attack=neutral_attack,
+            neutral_defense=neutral_defense,
+        )
+        model.created_at = created_at
+        model.saved_at = saved_at
+        model.home_advantage = home_advantage
+        model._team_strengths = team_strengths
+        model.trained = trained
+        model.trained_league = trained_league
+        model.last_training_result = training_result
+
+        last_fit_summary = model_payload.get("last_fit_summary")
+        if last_fit_summary is None:
+            model.last_fit_summary = None
+        else:
+            model.last_fit_summary = dict(
+                _require_mapping_payload(last_fit_summary, "last_fit_summary"),
+            )
+        return model
+
+    @classmethod
+    def load(cls, path: str | Path) -> PoissonModel:
+        input_path = Path(path)
+        if not input_path.exists():
+            raise FileNotFoundError(f"PoissonModel file does not exist: {input_path}")
+
+        raw_payload = input_path.read_text(encoding="utf-8")
+        try:
+            payload = json.loads(raw_payload, parse_constant=_reject_json_constant)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid PoissonModel JSON: {input_path}") from exc
+
+        return cls._from_persistence_payload(payload)
 
     @staticmethod
     def poisson_pmf(k: int, lambda_value: float) -> float:

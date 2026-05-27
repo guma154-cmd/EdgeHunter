@@ -455,6 +455,109 @@ class OddsHistorian:
             )
         return results
 
+    @staticmethod
+    def _build_snapshot_odds_payload(row: sqlite3.Row) -> dict[str, dict[str, float]]:
+        odds: dict[str, dict[str, float]] = {}
+        for bookmaker in SUPPORTED_BOOKMAKERS:
+            home = row[f"{bookmaker}_home"]
+            draw = row[f"{bookmaker}_draw"]
+            away = row[f"{bookmaker}_away"]
+            if home is None or draw is None or away is None:
+                continue
+            odds[bookmaker] = {
+                "home": float(home),
+                "draw": float(draw),
+                "away": float(away),
+            }
+        return odds
+
+    def get_recent_valid_snapshots(
+        self,
+        minutes: int = 30,
+        league: str | None = None,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        if minutes <= 0:
+            raise ValueError("minutes must be > 0")
+
+        reference_time = (
+            datetime.now(UTC).replace(microsecond=0)
+            if now is None
+            else self._ensure_aware_datetime(now, "now")
+        )
+        window_start = reference_time - timedelta(minutes=minutes)
+
+        league_clause = ""
+        params: list[Any] = [
+            window_start.isoformat(timespec="seconds"),
+            reference_time.isoformat(timespec="seconds"),
+        ]
+        if league is not None:
+            league_clause = "AND m.league = ?"
+            params.append(self._validate_required_text(league, "league"))
+
+        connection = self._connect()
+        connection.row_factory = sqlite3.Row
+        try:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    s.id AS snapshot_id,
+                    m.match_id,
+                    m.home_team,
+                    m.away_team,
+                    m.league,
+                    m.match_date,
+                    s.pinnacle_home,
+                    s.pinnacle_draw,
+                    s.pinnacle_away,
+                    s.bet365_home,
+                    s.bet365_draw,
+                    s.bet365_away,
+                    s.betano_home,
+                    s.betano_draw,
+                    s.betano_away,
+                    s.oddsportal_avg_home,
+                    s.oddsportal_avg_draw,
+                    s.oddsportal_avg_away,
+                    s.bookmakers_synced,
+                    s.valid_for_analysis,
+                    s.snapshot_timestamp,
+                    s.max_latency_seconds
+                FROM odds_snapshots AS s
+                JOIN matches AS m
+                    ON m.match_id = s.match_id
+                WHERE
+                    s.valid_for_analysis = 1
+                    AND s.snapshot_timestamp >= ?
+                    AND s.snapshot_timestamp <= ?
+                    {league_clause}
+                ORDER BY s.snapshot_timestamp DESC, s.id DESC
+                """,
+                tuple(params),
+            ).fetchall()
+        finally:
+            connection.close()
+
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            results.append(
+                {
+                    "snapshot_id": int(row["snapshot_id"]),
+                    "match_id": row["match_id"],
+                    "home_team": row["home_team"],
+                    "away_team": row["away_team"],
+                    "league": row["league"],
+                    "scheduled_time": datetime.fromisoformat(row["match_date"]),
+                    "snapshot_timestamp": datetime.fromisoformat(row["snapshot_timestamp"]),
+                    "bookmakers_synced": json.loads(row["bookmakers_synced"]),
+                    "valid_for_analysis": bool(row["valid_for_analysis"]),
+                    "max_latency_seconds": row["max_latency_seconds"],
+                    "odds": self._build_snapshot_odds_payload(row),
+                }
+            )
+        return results
+
     def _read_latest_scraper_timestamps(
         self,
         now: datetime,

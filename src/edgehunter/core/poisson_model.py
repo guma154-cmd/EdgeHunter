@@ -29,6 +29,10 @@ DEFAULT_REGULARIZATION_WEIGHT = 1e-4
 MIN_STEP_SIZE = 1e-8
 INITIAL_STEP_SIZE = 0.25
 GRADIENT_EPSILON = 1e-5
+DEPLOYMENT_DECISION_PROMOTE_NEW = "PROMOTE_NEW"
+DEPLOYMENT_DECISION_KEEP_PREVIOUS = "KEEP_PREVIOUS"
+DEPLOYMENT_DECISION_REJECT_CANDIDATE = "REJECT_CANDIDATE"
+LOG_LOSS_EPSILON = 1e-15
 
 _PERSISTENCE_REQUIRED_FIELDS = frozenset(
     {
@@ -315,6 +319,24 @@ class SanityCheckResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "passed": self.passed,
+            "reasons": list(self.reasons),
+            "warnings": list(self.warnings),
+            "metrics": dict(self.metrics),
+        }
+
+
+@dataclass(frozen=True)
+class DeploymentDecision:
+    approved: bool
+    decision: str
+    reasons: list[str]
+    warnings: list[str]
+    metrics: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "approved": self.approved,
+            "decision": self.decision,
             "reasons": list(self.reasons),
             "warnings": list(self.warnings),
             "metrics": dict(self.metrics),
@@ -1227,3 +1249,202 @@ class PoissonModel:
         if abs(normalized_total - 1.0) > PROBABILITY_TOLERANCE:
             raise ValueError("normalized probabilities must sum to 1")
         return normalized
+
+
+def _actual_result_from_match(match: dict[str, Any]) -> str:
+    result = match["result"]
+    if result not in {"home_win", "draw", "away_win"}:
+        raise ValueError("result must be one of home_win, draw, away_win")
+    return result
+
+
+def _predicted_result(probabilities: Mapping[str, float]) -> str:
+    return max(
+        ("home_win", "draw", "away_win"),
+        key=lambda field_name: probabilities[field_name],
+    )
+
+
+def _clip_probability(value: float) -> float:
+    return max(min(value, 1.0 - LOG_LOSS_EPSILON), LOG_LOSS_EPSILON)
+
+
+def _evaluate_model_on_validation_matches(
+    model: PoissonModel,
+    validation_matches: list[dict[str, Any]],
+    *,
+    metric_prefix: str,
+) -> tuple[dict[str, Any], list[str]]:
+    correct_predictions = 0
+    log_loss_total = 0.0
+    brier_total = 0.0
+    reasons: list[str] = []
+
+    for match in validation_matches:
+        actual_result = _actual_result_from_match(match)
+        try:
+            prediction = model.predict_probabilities(
+                home_team=match["home_team"],
+                away_team=match["away_team"],
+            )
+        except Exception as exc:
+            reasons.append(f"{metric_prefix} prediction failed: {exc}")
+            continue
+
+        probability_sum = 0.0
+        probabilities: dict[str, float] = {}
+        for field_name in ("home_win", "draw", "away_win"):
+            try:
+                probability = float(prediction[field_name])
+            except (KeyError, TypeError, ValueError) as exc:
+                reasons.append(f"{metric_prefix} probability {field_name} is invalid: {exc}")
+                probability = float("nan")
+            probabilities[field_name] = probability
+            if not math.isfinite(probability):
+                reasons.append(f"{metric_prefix} probability {field_name} must be finite")
+            elif probability < 0 or probability > 1:
+                reasons.append(f"{metric_prefix} probability {field_name} must be between 0 and 1")
+            probability_sum += probability
+
+        if not math.isfinite(probability_sum) or abs(probability_sum - 1.0) > 1e-6:
+            reasons.append(f"{metric_prefix} probabilities must sum to approximately 1")
+            continue
+
+        if _predicted_result(probabilities) == actual_result:
+            correct_predictions += 1
+
+        actual_probability = _clip_probability(probabilities[actual_result])
+        log_loss_total += -math.log(actual_probability)
+
+        brier_total += sum(
+            (probabilities[field_name] - (1.0 if field_name == actual_result else 0.0)) ** 2
+            for field_name in ("home_win", "draw", "away_win")
+        )
+
+    match_count = len(validation_matches)
+    if reasons:
+        return {}, reasons
+
+    metrics = {
+        f"{metric_prefix}_accuracy": correct_predictions / match_count,
+        f"{metric_prefix}_log_loss": log_loss_total / match_count,
+        f"{metric_prefix}_brier_score": brier_total / match_count,
+    }
+    return metrics, reasons
+
+
+def evaluate_deployment_candidate(
+    *,
+    candidate_model: PoissonModel,
+    validation_matches: list[Any],
+    previous_model: PoissonModel | None = None,
+    min_validation_matches: int = 5,
+    max_log_loss_regression: float = 0.0,
+    max_brier_regression: float = 0.0,
+) -> DeploymentDecision:
+    if min_validation_matches < 1:
+        raise ValueError("min_validation_matches must be >= 1")
+    if max_log_loss_regression < 0 or not math.isfinite(max_log_loss_regression):
+        raise ValueError("max_log_loss_regression must be finite and >= 0")
+    if max_brier_regression < 0 or not math.isfinite(max_brier_regression):
+        raise ValueError("max_brier_regression must be finite and >= 0")
+
+    reasons: list[str] = []
+    warnings_list: list[str] = []
+    metrics: dict[str, Any] = {}
+
+    try:
+        normalized_matches = [
+            PoissonModel._normalize_training_match(match) for match in validation_matches
+        ]
+    except ValueError as exc:
+        return DeploymentDecision(
+            approved=False,
+            decision=DEPLOYMENT_DECISION_REJECT_CANDIDATE,
+            reasons=[f"validation match is invalid: {exc}"],
+            warnings=[],
+            metrics={"validation_matches": 0},
+        )
+
+    metrics["validation_matches"] = len(normalized_matches)
+    if len(normalized_matches) < min_validation_matches:
+        reasons.append(
+            f"validation_matches must be >= {min_validation_matches}",
+        )
+
+    sanity = candidate_model.sanity_check()
+    metrics["candidate_sanity_passed"] = sanity.passed
+    metrics["candidate_sanity_metrics"] = sanity.metrics
+    warnings_list.extend(sanity.warnings)
+    if not sanity.passed:
+        reasons.extend(f"candidate sanity failed: {reason}" for reason in sanity.reasons)
+
+    if not reasons:
+        candidate_metrics, candidate_reasons = _evaluate_model_on_validation_matches(
+            candidate_model,
+            normalized_matches,
+            metric_prefix="candidate",
+        )
+        metrics.update(candidate_metrics)
+        reasons.extend(candidate_reasons)
+
+    for field_name in (
+        "candidate_accuracy",
+        "candidate_log_loss",
+        "candidate_brier_score",
+    ):
+        value = metrics.get(field_name)
+        if value is not None and not math.isfinite(float(value)):
+            reasons.append(f"{field_name} must be finite")
+
+    if reasons:
+        return DeploymentDecision(
+            approved=False,
+            decision=DEPLOYMENT_DECISION_REJECT_CANDIDATE,
+            reasons=reasons,
+            warnings=warnings_list,
+            metrics=metrics,
+        )
+
+    if previous_model is not None:
+        previous_metrics, previous_reasons = _evaluate_model_on_validation_matches(
+            previous_model,
+            normalized_matches,
+            metric_prefix="previous",
+        )
+        metrics.update(previous_metrics)
+        if previous_reasons:
+            return DeploymentDecision(
+                approved=False,
+                decision=DEPLOYMENT_DECISION_REJECT_CANDIDATE,
+                reasons=previous_reasons,
+                warnings=warnings_list,
+                metrics=metrics,
+            )
+
+        candidate_log_loss = float(metrics["candidate_log_loss"])
+        previous_log_loss = float(metrics["previous_log_loss"])
+        candidate_brier_score = float(metrics["candidate_brier_score"])
+        previous_brier_score = float(metrics["previous_brier_score"])
+
+        if candidate_log_loss > previous_log_loss + max_log_loss_regression:
+            reasons.append("candidate_log_loss regressed against previous_model")
+        if candidate_brier_score > previous_brier_score + max_brier_regression:
+            reasons.append("candidate_brier_score regressed against previous_model")
+
+        if reasons:
+            return DeploymentDecision(
+                approved=False,
+                decision=DEPLOYMENT_DECISION_KEEP_PREVIOUS,
+                reasons=reasons,
+                warnings=warnings_list,
+                metrics=metrics,
+            )
+
+    return DeploymentDecision(
+        approved=True,
+        decision=DEPLOYMENT_DECISION_PROMOTE_NEW,
+        reasons=[],
+        warnings=warnings_list,
+        metrics=metrics,
+    )

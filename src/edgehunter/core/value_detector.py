@@ -15,6 +15,8 @@ PINNACLE_SOURCE = "pinnacle_benchmark"
 PINNACLE_DETECTION_METHOD = "pinnacle_ev_v1"
 POISSON_SOURCE = "poisson_model"
 POISSON_DETECTION_METHOD = "poisson_ev_v1"
+CONSENSUS_SOURCE = "consensus"
+CONSENSUS_DETECTION_METHOD = "consensus_pinnacle_poisson_v1"
 SELECTION_BY_ODDS_KEY: dict[str, str] = {
     "home": "home_win",
     "draw": "draw",
@@ -270,6 +272,78 @@ def detect_value_vs_poisson(
         )
 
     return opportunities
+
+
+def _opportunity_key(opportunity: SimulatedValueOpportunity) -> tuple[str, str, str]:
+    return (
+        opportunity.match_id,
+        opportunity.market,
+        opportunity.selection,
+    )
+
+
+def detect_value_consensus(
+    snapshot: dict[str, Any],
+    poisson_model: Any,
+    target_bookmaker: str,
+    market: str = "1x2",
+    min_ev: float = 0.0,
+    require_sanity: bool = True,
+) -> list[SimulatedValueOpportunity]:
+    pinnacle_opportunities = detect_value_vs_pinnacle(
+        snapshot=snapshot,
+        target_bookmaker=target_bookmaker,
+        market=market,
+        min_ev=min_ev,
+    )
+    poisson_opportunities = detect_value_vs_poisson(
+        snapshot=snapshot,
+        poisson_model=poisson_model,
+        target_bookmaker=target_bookmaker,
+        market=market,
+        min_ev=min_ev,
+        require_sanity=require_sanity,
+    )
+
+    poisson_by_key = {
+        _opportunity_key(opportunity): opportunity
+        for opportunity in poisson_opportunities
+    }
+
+    consensus_opportunities: list[SimulatedValueOpportunity] = []
+    for pinnacle_opportunity in pinnacle_opportunities:
+        poisson_opportunity = poisson_by_key.get(_opportunity_key(pinnacle_opportunity))
+        if poisson_opportunity is None:
+            continue
+
+        conservative_source = min(
+            (pinnacle_opportunity, poisson_opportunity),
+            key=lambda opportunity: opportunity.expected_value,
+        )
+        conservative_ev = min(
+            pinnacle_opportunity.expected_value,
+            poisson_opportunity.expected_value,
+        )
+        conservative_edge = min(
+            pinnacle_opportunity.edge_percentage,
+            poisson_opportunity.edge_percentage,
+        )
+
+        consensus_opportunities.append(
+            SimulatedValueOpportunity(
+                match_id=pinnacle_opportunity.match_id,
+                market=pinnacle_opportunity.market,
+                selection=pinnacle_opportunity.selection,
+                true_probability=conservative_source.true_probability,
+                offered_odds=conservative_source.offered_odds,
+                expected_value=conservative_ev,
+                edge_percentage=conservative_edge,
+                source=CONSENSUS_SOURCE,
+                detection_method=CONSENSUS_DETECTION_METHOD,
+            )
+        )
+
+    return consensus_opportunities
 
 
 @dataclass(frozen=True)

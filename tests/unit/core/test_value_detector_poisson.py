@@ -241,7 +241,6 @@ def test_opportunity_id_is_deterministic() -> None:
 def test_model_detection_module_does_not_implement_disallowed_flows() -> None:
     source = inspect.getsource(value_detector_module).lower()
 
-    assert "dedup" not in source
     assert "stake" not in source
     assert "kelly" not in source
     assert "bankroll" not in source

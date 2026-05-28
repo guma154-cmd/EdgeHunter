@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
+from collections.abc import Iterable
 from typing import Any
 
 
@@ -120,6 +121,20 @@ def build_simulated_opportunity_id(
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_aware_datetime(value: datetime, field_name: str) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must be timezone-aware")
+    return value
+
+
+def _parse_created_at(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        created_at = value
+    else:
+        created_at = datetime.fromisoformat(str(value))
+    return _ensure_aware_datetime(created_at, "created_at")
 
 
 def detect_value_vs_pinnacle(
@@ -344,6 +359,88 @@ def detect_value_consensus(
         )
 
     return consensus_opportunities
+
+
+def _deduplication_payload(
+    opportunity: SimulatedValueOpportunity | dict[str, Any],
+) -> dict[str, Any]:
+    if isinstance(opportunity, SimulatedValueOpportunity):
+        return opportunity.to_dict()
+    if isinstance(opportunity, dict):
+        return opportunity
+    raise ValueError("opportunity must be a SimulatedValueOpportunity or dict")
+
+
+def _deduplication_key(
+    opportunity: SimulatedValueOpportunity | dict[str, Any],
+) -> tuple[str, str, str, str, str]:
+    payload = _deduplication_payload(opportunity)
+    return (
+        _require_text(str(payload.get("match_id", "")), "match_id"),
+        _require_text(str(payload.get("market", "")), "market"),
+        _require_text(str(payload.get("selection", "")), "selection"),
+        _require_text(str(payload.get("source", "")), "source"),
+        _require_text(str(payload.get("detection_method", "")), "detection_method"),
+    )
+
+
+def _validate_safe_opportunity(opportunity: SimulatedValueOpportunity) -> None:
+    if opportunity.is_simulated is not True:
+        raise ValueError("opportunity must be simulated")
+    if opportunity.paper_trading is not True:
+        raise ValueError("opportunity must be paper trading")
+    if opportunity.actionable is not False:
+        raise ValueError("opportunity must not be actionable")
+    if opportunity.bet_placed is not False:
+        raise ValueError("opportunity must not be placed")
+    if opportunity.alerted is not False:
+        raise ValueError("opportunity must not be alerted")
+
+
+def _created_at_for_deduplication(
+    opportunity: SimulatedValueOpportunity | dict[str, Any],
+) -> datetime:
+    payload = _deduplication_payload(opportunity)
+    return _parse_created_at(payload.get("created_at"))
+
+
+def deduplicate_opportunities(
+    opportunities: list[SimulatedValueOpportunity],
+    seen: Iterable[SimulatedValueOpportunity | dict[str, Any]] | None = None,
+    window_minutes: int = 60,
+    now: datetime | None = None,
+) -> list[SimulatedValueOpportunity]:
+    if window_minutes <= 0:
+        raise ValueError("window_minutes must be > 0")
+
+    reference_time = (
+        datetime.now(timezone.utc)
+        if now is None
+        else _ensure_aware_datetime(now, "now")
+    )
+    window_start = reference_time - timedelta(minutes=window_minutes)
+
+    blocked_keys: set[tuple[str, str, str, str, str]] = set()
+    if seen is not None:
+        for seen_opportunity in seen:
+            if _created_at_for_deduplication(seen_opportunity) >= window_start:
+                blocked_keys.add(_deduplication_key(seen_opportunity))
+
+    results: list[SimulatedValueOpportunity] = []
+    current_window_keys: set[tuple[str, str, str, str, str]] = set()
+    for opportunity in opportunities:
+        _validate_safe_opportunity(opportunity)
+        opportunity_created_at = _created_at_for_deduplication(opportunity)
+        key = _deduplication_key(opportunity)
+        if opportunity_created_at < window_start:
+            results.append(opportunity)
+            continue
+        if key in blocked_keys or key in current_window_keys:
+            continue
+        current_window_keys.add(key)
+        results.append(opportunity)
+
+    return results
 
 
 @dataclass(frozen=True)

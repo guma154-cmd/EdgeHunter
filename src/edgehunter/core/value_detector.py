@@ -11,6 +11,13 @@ from typing import Any
 
 
 MIN_OFFERED_ODDS = 1.01
+PINNACLE_SOURCE = "pinnacle_benchmark"
+PINNACLE_DETECTION_METHOD = "pinnacle_ev_v1"
+SELECTION_BY_ODDS_KEY: dict[str, str] = {
+    "home": "home_win",
+    "draw": "draw",
+    "away": "away_win",
+}
 
 
 def calculate_ev(true_prob: float, offered_odds: float) -> float:
@@ -60,8 +67,25 @@ def _normalize_offered_odds(offered_odds: float) -> float:
     return clean_odds
 
 
+def _normalize_min_ev(min_ev: float) -> float:
+    clean_min_ev = _require_finite_float(min_ev, "min_ev")
+    if clean_min_ev < 0.0:
+        raise ValueError("min_ev must be >= 0")
+    return clean_min_ev
+
+
 def _stable_number(value: float) -> str:
     return format(value, ".15g")
+
+
+def _snapshot_odds(snapshot: dict[str, Any], bookmaker: str) -> dict[str, Any] | None:
+    odds = snapshot.get("odds")
+    if not isinstance(odds, dict):
+        return None
+    bookmaker_odds = odds.get(bookmaker)
+    if not isinstance(bookmaker_odds, dict):
+        return None
+    return bookmaker_odds
 
 
 def build_simulated_opportunity_id(
@@ -89,6 +113,54 @@ def build_simulated_opportunity_id(
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def detect_value_vs_pinnacle(
+    snapshot: dict[str, Any],
+    target_bookmaker: str,
+    market: str = "1x2",
+    min_ev: float = 0.0,
+) -> list[SimulatedValueOpportunity]:
+    clean_min_ev = _normalize_min_ev(min_ev)
+    match_id = _require_text(str(snapshot.get("match_id", "")), "match_id")
+    target_bookmaker_clean = _require_text(target_bookmaker, "target_bookmaker")
+    market_clean = _require_text(market, "market")
+
+    if snapshot.get("valid_for_analysis") is not True:
+        return []
+
+    pinnacle_odds = _snapshot_odds(snapshot, "pinnacle")
+    target_odds = _snapshot_odds(snapshot, target_bookmaker_clean)
+    if pinnacle_odds is None or target_odds is None:
+        return []
+
+    opportunities: list[SimulatedValueOpportunity] = []
+    for odds_key, selection in SELECTION_BY_ODDS_KEY.items():
+        if odds_key not in pinnacle_odds or odds_key not in target_odds:
+            continue
+
+        pinnacle_odd = _normalize_offered_odds(pinnacle_odds[odds_key])
+        offered_odd = _normalize_offered_odds(target_odds[odds_key])
+        true_probability = 1.0 / pinnacle_odd
+        expected_value = calculate_ev(true_probability, offered_odd)
+        if expected_value < clean_min_ev:
+            continue
+
+        opportunities.append(
+            SimulatedValueOpportunity(
+                match_id=match_id,
+                market=market_clean,
+                selection=selection,
+                true_probability=true_probability,
+                offered_odds=offered_odd,
+                expected_value=expected_value,
+                edge_percentage=expected_value * 100.0,
+                source=PINNACLE_SOURCE,
+                detection_method=PINNACLE_DETECTION_METHOD,
+            )
+        )
+
+    return opportunities
 
 
 @dataclass(frozen=True)

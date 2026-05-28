@@ -13,10 +13,15 @@ from typing import Any
 MIN_OFFERED_ODDS = 1.01
 PINNACLE_SOURCE = "pinnacle_benchmark"
 PINNACLE_DETECTION_METHOD = "pinnacle_ev_v1"
+POISSON_SOURCE = "poisson_model"
+POISSON_DETECTION_METHOD = "poisson_ev_v1"
 SELECTION_BY_ODDS_KEY: dict[str, str] = {
     "home": "home_win",
     "draw": "draw",
     "away": "away_win",
+}
+ODDS_KEY_BY_SELECTION: dict[str, str] = {
+    selection: odds_key for odds_key, selection in SELECTION_BY_ODDS_KEY.items()
 }
 
 
@@ -157,6 +162,110 @@ def detect_value_vs_pinnacle(
                 edge_percentage=expected_value * 100.0,
                 source=PINNACLE_SOURCE,
                 detection_method=PINNACLE_DETECTION_METHOD,
+            )
+        )
+
+    return opportunities
+
+
+def _model_sanity_passed(model: Any) -> bool:
+    sanity_check = getattr(model, "sanity_check", None)
+    if not callable(sanity_check):
+        return False
+    sanity_result = sanity_check()
+    return getattr(sanity_result, "passed", False) is True
+
+
+def _prediction_used_fallback(
+    model: Any,
+    *,
+    home_team: str,
+    away_team: str,
+) -> bool:
+    predict_match = getattr(model, "predict_match", None)
+    if not callable(predict_match):
+        return True
+    prediction = predict_match(home_team=home_team, away_team=away_team)
+    if not isinstance(prediction, dict):
+        return True
+    return prediction.get("used_fallback") is True
+
+
+def _model_probabilities(
+    model: Any,
+    *,
+    home_team: str,
+    away_team: str,
+) -> dict[str, Any]:
+    predict_probabilities = getattr(model, "predict_probabilities", None)
+    if not callable(predict_probabilities):
+        return {}
+    probabilities = predict_probabilities(home_team=home_team, away_team=away_team)
+    if not isinstance(probabilities, dict):
+        return {}
+    return probabilities
+
+
+def detect_value_vs_poisson(
+    snapshot: dict[str, Any],
+    poisson_model: Any,
+    target_bookmaker: str,
+    market: str = "1x2",
+    min_ev: float = 0.0,
+    require_sanity: bool = True,
+) -> list[SimulatedValueOpportunity]:
+    clean_min_ev = _normalize_min_ev(min_ev)
+    match_id = _require_text(str(snapshot.get("match_id", "")), "match_id")
+    home_team = _require_text(str(snapshot.get("home_team", "")), "home_team")
+    away_team = _require_text(str(snapshot.get("away_team", "")), "away_team")
+    target_bookmaker_clean = _require_text(target_bookmaker, "target_bookmaker")
+    market_clean = _require_text(market, "market")
+
+    if snapshot.get("valid_for_analysis") is not True:
+        return []
+    if getattr(poisson_model, "trained", False) is not True:
+        return []
+    if require_sanity and not _model_sanity_passed(poisson_model):
+        return []
+    if _prediction_used_fallback(
+        poisson_model,
+        home_team=home_team,
+        away_team=away_team,
+    ):
+        return []
+
+    target_odds = _snapshot_odds(snapshot, target_bookmaker_clean)
+    if target_odds is None:
+        return []
+
+    probabilities = _model_probabilities(
+        poisson_model,
+        home_team=home_team,
+        away_team=away_team,
+    )
+
+    opportunities: list[SimulatedValueOpportunity] = []
+    for selection, odds_key in ODDS_KEY_BY_SELECTION.items():
+        if selection not in probabilities or odds_key not in target_odds:
+            continue
+
+        true_probability = _normalize_probability(probabilities[selection])
+        offered_odd = _normalize_offered_odds(target_odds[odds_key])
+        expected_value = calculate_ev(true_probability, offered_odd)
+        if expected_value < clean_min_ev:
+            continue
+
+        opportunities.append(
+            SimulatedValueOpportunity(
+                match_id=match_id,
+                market=market_clean,
+                selection=selection,
+                true_probability=true_probability,
+                offered_odds=offered_odd,
+                expected_value=expected_value,
+                edge_percentage=expected_value * 100.0,
+                source=POISSON_SOURCE,
+                detection_method=POISSON_DETECTION_METHOD,
             )
         )
 

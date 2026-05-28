@@ -21,6 +21,7 @@ EXPECTED_TABLES: tuple[str, ...] = (
     "matches",
     "odds_snapshots",
     "scraper_health",
+    "value_detections",
     "schema_version",
 )
 
@@ -74,6 +75,26 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
         "last_alert_sent",
         "checked_at",
     ),
+    "value_detections": (
+        "id",
+        "opportunity_id",
+        "match_id",
+        "market",
+        "selection",
+        "true_probability",
+        "offered_odds",
+        "expected_value",
+        "edge_percentage",
+        "source",
+        "detection_method",
+        "created_at",
+        "is_simulated",
+        "paper_trading",
+        "actionable",
+        "bet_placed",
+        "alerted",
+        "inserted_at",
+    ),
     "schema_version": (
         "version",
         "applied_at",
@@ -87,6 +108,8 @@ EXPECTED_INDEXES: tuple[str, ...] = (
     "idx_snapshots_match_time",
     "idx_snapshots_valid",
     "idx_scraper_health_status",
+    "idx_value_detections_match_created",
+    "idx_value_detections_safety_flags",
 )
 
 SCHEMA_SQL = """
@@ -153,6 +176,32 @@ CREATE TABLE IF NOT EXISTS scraper_health (
 
 CREATE INDEX IF NOT EXISTS idx_scraper_health_status
     ON scraper_health(scraper_name, status);
+
+CREATE TABLE IF NOT EXISTS value_detections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id TEXT NOT NULL UNIQUE,
+    match_id TEXT NOT NULL,
+    market TEXT NOT NULL,
+    selection TEXT NOT NULL,
+    true_probability REAL NOT NULL,
+    offered_odds REAL NOT NULL,
+    expected_value REAL NOT NULL,
+    edge_percentage REAL NOT NULL,
+    source TEXT NOT NULL,
+    detection_method TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    is_simulated INTEGER NOT NULL DEFAULT 1,
+    paper_trading INTEGER NOT NULL DEFAULT 1,
+    actionable INTEGER NOT NULL DEFAULT 0,
+    bet_placed INTEGER NOT NULL DEFAULT 0,
+    alerted INTEGER NOT NULL DEFAULT 0,
+    inserted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_value_detections_match_created
+    ON value_detections(match_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_value_detections_safety_flags
+    ON value_detections(is_simulated, paper_trading, actionable, bet_placed, alerted);
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,

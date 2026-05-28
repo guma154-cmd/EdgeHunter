@@ -12,6 +12,7 @@ from typing import Any
 
 
 MIN_OFFERED_ODDS = 1.01
+PROBABILITY_SUM_TOLERANCE = 1e-6
 PINNACLE_SOURCE = "pinnacle_benchmark"
 PINNACLE_DETECTION_METHOD = "pinnacle_ev_v1"
 POISSON_SOURCE = "poisson_model"
@@ -223,6 +224,23 @@ def _model_probabilities(
     return probabilities
 
 
+def _normalize_model_probability_vector(
+    probabilities: dict[str, Any],
+) -> dict[str, float]:
+    required_selections = tuple(ODDS_KEY_BY_SELECTION)
+    if not all(selection in probabilities for selection in required_selections):
+        return {}
+
+    normalized = {
+        selection: _normalize_probability(probabilities[selection])
+        for selection in required_selections
+    }
+    probability_sum = sum(normalized.values())
+    if abs(probability_sum - 1.0) > PROBABILITY_SUM_TOLERANCE:
+        raise ValueError("model probabilities must sum to 1")
+    return normalized
+
+
 def detect_value_vs_poisson(
     snapshot: dict[str, Any],
     poisson_model: Any,
@@ -260,13 +278,16 @@ def detect_value_vs_poisson(
         home_team=home_team,
         away_team=away_team,
     )
+    normalized_probabilities = _normalize_model_probability_vector(probabilities)
+    if not normalized_probabilities:
+        return []
 
     opportunities: list[SimulatedValueOpportunity] = []
     for selection, odds_key in ODDS_KEY_BY_SELECTION.items():
-        if selection not in probabilities or odds_key not in target_odds:
+        if odds_key not in target_odds:
             continue
 
-        true_probability = _normalize_probability(probabilities[selection])
+        true_probability = normalized_probabilities[selection]
         offered_odd = _normalize_offered_odds(target_odds[odds_key])
         expected_value = calculate_ev(true_probability, offered_odd)
         if expected_value < clean_min_ev:

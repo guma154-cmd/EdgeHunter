@@ -32,7 +32,7 @@ class FakeModel:
         self.probabilities = probabilities or {
             "home_win": 0.60,
             "draw": 0.20,
-            "away_win": 0.10,
+            "away_win": 0.20,
         }
 
     def sanity_check(self) -> FakeSanityResult:
@@ -90,7 +90,7 @@ def test_returns_simulated_opportunity_when_pinnacle_and_poisson_agree() -> None
 def test_does_not_return_when_only_pinnacle_detects() -> None:
     opportunities = detect_value_consensus(
         _snapshot(),
-        FakeModel(probabilities={"home_win": 0.40, "draw": 0.20, "away_win": 0.10}),
+        FakeModel(probabilities={"home_win": 0.40, "draw": 0.32, "away_win": 0.28}),
         target_bookmaker="bet365",
     )
 

@@ -45,7 +45,7 @@ def test_returns_unique_opportunities() -> None:
 
 def test_removes_duplicate_inside_same_list_and_preserves_first_occurrence() -> None:
     first = _opportunity(offered_odds=2.00, expected_value=0.20)
-    duplicate = _opportunity(offered_odds=2.10, expected_value=0.26)
+    duplicate = _opportunity(offered_odds=2.04, expected_value=0.24)  # immaterial change
 
     result = deduplicate_opportunities([first, duplicate], now=NOW)
 
@@ -136,18 +136,57 @@ def test_preserves_security_flags() -> None:
 
 def test_does_not_use_opportunity_id_as_only_key() -> None:
     first = _opportunity(offered_odds=2.00, expected_value=0.20)
-    second = _opportunity(offered_odds=2.20, expected_value=0.32)
+    second = _opportunity(offered_odds=2.04, expected_value=0.24)  # immaterial
 
     assert first.opportunity_id != second.opportunity_id
     assert deduplicate_opportunities([first, second], now=NOW) == [first]
 
 
-def test_material_odds_change_does_not_prevent_logical_deduplication_inside_window() -> None:
+def test_material_odds_change_allows_redetection_inside_window() -> None:
     seen = [_opportunity(offered_odds=2.00, expected_value=0.20)]
-    current = _opportunity(offered_odds=2.50, expected_value=0.50)
+    current = _opportunity(offered_odds=2.10, expected_value=0.25)  # 5% change
 
     assert current.opportunity_id != seen[0].opportunity_id
+    assert deduplicate_opportunities([current], seen=seen, now=NOW) == [current]
+
+def test_material_odds_change_greater_than_5_percent_allows_redetection() -> None:
+    seen = [_opportunity(offered_odds=2.00)]
+    current = _opportunity(offered_odds=2.20)  # 10% change
+    assert deduplicate_opportunities([current], seen=seen, now=NOW) == [current]
+
+def test_immaterial_odds_change_maintains_deduplication_inside_window() -> None:
+    seen = [_opportunity(offered_odds=2.00)]
+    current = _opportunity(offered_odds=2.09)  # 4.5% change
     assert deduplicate_opportunities([current], seen=seen, now=NOW) == []
+
+def test_seen_without_offered_odds_is_treated_conservatively() -> None:
+    seen = [_opportunity().to_dict()]
+    del seen[0]["offered_odds"]
+    current = _opportunity(offered_odds=3.00)
+    assert deduplicate_opportunities([current], seen=seen, now=NOW) == []
+
+def test_invalid_new_offered_odds_fails() -> None:
+    unsafe = object.__new__(SimulatedValueOpportunity)
+    object.__setattr__(unsafe, "match_id", "match-001")
+    object.__setattr__(unsafe, "market", "1x2")
+    object.__setattr__(unsafe, "selection", "home_win")
+    object.__setattr__(unsafe, "source", "consensus")
+    object.__setattr__(unsafe, "detection_method", "consensus")
+    object.__setattr__(unsafe, "created_at", NOW.isoformat())
+    object.__setattr__(unsafe, "offered_odds", float("nan"))
+    object.__setattr__(unsafe, "true_probability", 0.5)
+    object.__setattr__(unsafe, "expected_value", 0.1)
+    object.__setattr__(unsafe, "edge_percentage", 10.0)
+    object.__setattr__(unsafe, "snapshot_id", None)
+    object.__setattr__(unsafe, "opportunity_id", "opp")
+    object.__setattr__(unsafe, "is_simulated", True)
+    object.__setattr__(unsafe, "paper_trading", True)
+    object.__setattr__(unsafe, "actionable", False)
+    object.__setattr__(unsafe, "bet_placed", False)
+    object.__setattr__(unsafe, "alerted", False)
+
+    with pytest.raises(ValueError, match="opportunity must have finite offered_odds"):
+        deduplicate_opportunities([unsafe], now=NOW)
 
 
 def test_rejects_unsafe_opportunity_shape() -> None:

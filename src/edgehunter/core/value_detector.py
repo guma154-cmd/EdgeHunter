@@ -456,6 +456,19 @@ def _deduplication_key(
         _require_text(str(payload.get("detection_method", "")), "detection_method"),
     )
 
+def _get_offered_odds_or_none(opportunity: SimulatedValueOpportunity | dict[str, Any]) -> float | None:
+    payload = _deduplication_payload(opportunity)
+    odds = payload.get("offered_odds")
+    if odds is None:
+        return None
+    try:
+        odds_float = float(odds)
+        if math.isnan(odds_float) or math.isinf(odds_float):
+            return None
+        return odds_float
+    except (TypeError, ValueError):
+        return None
+
 
 def _validate_safe_opportunity(opportunity: SimulatedValueOpportunity) -> None:
     if opportunity.is_simulated is not True:
@@ -493,14 +506,15 @@ def deduplicate_opportunities(
     )
     window_start = reference_time - timedelta(minutes=window_minutes)
 
-    blocked_keys: set[tuple[str, str, str, str, str]] = set()
+    seen_states: dict[tuple[str, str, str, str, str], list[float | None]] = {}
     if seen is not None:
         for seen_opportunity in seen:
             if _created_at_for_deduplication(seen_opportunity) >= window_start:
-                blocked_keys.add(_deduplication_key(seen_opportunity))
+                key = _deduplication_key(seen_opportunity)
+                seen_odds = _get_offered_odds_or_none(seen_opportunity)
+                seen_states.setdefault(key, []).append(seen_odds)
 
     results: list[SimulatedValueOpportunity] = []
-    current_window_keys: set[tuple[str, str, str, str, str]] = set()
     for opportunity in opportunities:
         _validate_safe_opportunity(opportunity)
         opportunity_created_at = _created_at_for_deduplication(opportunity)
@@ -508,9 +522,25 @@ def deduplicate_opportunities(
         if opportunity_created_at < window_start:
             results.append(opportunity)
             continue
-        if key in blocked_keys or key in current_window_keys:
-            continue
-        current_window_keys.add(key)
+
+        current_odds = opportunity.offered_odds
+        if math.isnan(current_odds) or math.isinf(current_odds):
+            raise ValueError("opportunity must have finite offered_odds")
+            
+        if key in seen_states:
+            is_material_change = True
+            for old_odds in seen_states[key]:
+                if old_odds is None:
+                    is_material_change = False
+                    break
+                if abs(current_odds - old_odds) / old_odds < 0.05:
+                    is_material_change = False
+                    break
+
+            if not is_material_change:
+                continue
+
+        seen_states.setdefault(key, []).append(current_odds)
         results.append(opportunity)
 
     return results

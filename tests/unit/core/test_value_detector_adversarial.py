@@ -303,7 +303,7 @@ def test_deduplication_ignores_same_id_when_logical_keys_differ() -> None:
 
 def test_deduplication_uses_logical_key_even_when_ids_differ() -> None:
     first = _opportunity(offered_odds=2.0, expected_value=0.20)
-    second = _opportunity(offered_odds=2.4, expected_value=0.44)
+    second = _opportunity(offered_odds=2.04, expected_value=0.24)  # immaterial change
 
     assert first.opportunity_id != second.opportunity_id
     assert deduplicate_opportunities([first, second], now=NOW) == [first]

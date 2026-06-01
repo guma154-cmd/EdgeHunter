@@ -95,3 +95,43 @@ def test_sanity_module_does_not_define_operational_integrations() -> None:
     assert "actionable=true" not in source.replace(" ", "")
     assert "bet_placed=true" not in source.replace(" ", "")
     assert "alerted=true" not in source.replace(" ", "")
+
+
+# --- STORY-04B-001 regression test ---
+
+
+def test_sanity_deduplication_fixture_uses_dynamic_timestamp() -> None:
+    """Regression: _opportunity() must use datetime.now(timezone.utc), not a fixed past
+    timestamp. A fixed past timestamp (e.g. '2026-05-28T12:00:00+00:00') falls outside
+    the 60-minute deduplication window, so both copies pass through — correct historical
+    behaviour but a false-negative in the sanity check.
+
+    This test ensures the sanity check detects real deduplication failures rather than
+    silently reporting pass=False due to a stale fixture.
+    """
+    # A healthy sanity check must confirm deduplication works.
+    result = sanity_check_value_detector()
+
+    assert result.metrics["deduplication_removes_duplicate"] is True, (
+        "deduplication_removes_duplicate must be True in a healthy environment. "
+        "If this fails, check that _opportunity() uses datetime.now(timezone.utc) "
+        "for created_at instead of a hardcoded past timestamp."
+    )
+
+
+def test_sanity_deduplication_check_catches_real_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: sanity must report deduplication_removes_duplicate=False when
+    deduplicate_opportunities genuinely does not deduplicate.
+    """
+    from src.edgehunter.core import value_detector_sanity as sm
+
+    # Patch deduplicate_opportunities to never remove anything
+    monkeypatch.setattr(sm, "deduplicate_opportunities", lambda opps, **kw: list(opps))
+
+    result = sanity_check_value_detector()
+
+    assert result.passed is False
+    assert "logical_deduplication_failed" in result.reasons
+    assert result.metrics["deduplication_removes_duplicate"] is False

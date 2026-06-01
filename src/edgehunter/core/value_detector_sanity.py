@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 import inspect
 import sqlite3
@@ -92,6 +93,10 @@ def _snapshot(**overrides: object) -> dict[str, object]:
 
 
 def _opportunity(**overrides: object) -> SimulatedValueOpportunity:
+    # created_at must be within the deduplication window (now - 60min, now)
+    # so that deduplicate_opportunities([opp, opp]) correctly removes the duplicate.
+    # Using a fixed past timestamp would place the opportunity outside the window,
+    # causing both copies to pass through (correct historical behaviour, wrong for sanity).
     data: dict[str, object] = {
         "match_id": "match-001",
         "market": "1x2",
@@ -102,7 +107,7 @@ def _opportunity(**overrides: object) -> SimulatedValueOpportunity:
         "edge_percentage": 20.0,
         "source": "consensus",
         "detection_method": "consensus_pinnacle_poisson_v1",
-        "created_at": "2026-05-28T12:00:00+00:00",
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     data.update(overrides)
     return SimulatedValueOpportunity(**data)

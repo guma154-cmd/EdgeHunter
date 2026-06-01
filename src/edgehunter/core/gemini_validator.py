@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
+import json
 import math
 from typing import Any
 import unicodedata
@@ -88,6 +90,15 @@ _RESULT_FIELDS = frozenset(
     }
 )
 
+_AI_RESPONSE_FIELDS = frozenset(
+    {
+        "technical_verdict",
+        "confidence",
+        "risk_factors",
+        "rationale",
+    }
+)
+
 _PROMPT_INPUT_FIELD_ORDER = (
     "opportunity_id",
     "match_id",
@@ -121,6 +132,15 @@ class ParserStatus(str, Enum):
     PARSED = "parsed"
     RECOVERED = "recovered"
     FAILED = "failed"
+
+
+_AI_RESPONSE_VERDICTS = frozenset(
+    {
+        TechnicalVerdict.PASS.value,
+        TechnicalVerdict.REVIEW.value,
+        TechnicalVerdict.REJECT.value,
+    }
+)
 
 
 def _text_for_match(value: str) -> str:
@@ -541,3 +561,178 @@ def build_gemini_validation_prompt(
             "}",
         ],
     )
+
+
+def _validation_id(
+    *,
+    opportunity_id: str,
+    provider: str,
+    model_name: str,
+    prompt_hash: str,
+    raw_response: str,
+) -> str:
+    payload = json.dumps(
+        {
+            "model_name": model_name,
+            "opportunity_id": opportunity_id,
+            "prompt_hash": prompt_hash,
+            "provider": provider,
+            "raw_response": raw_response,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"ai-validation-{digest}"
+
+
+def _safe_failed_result(
+    *,
+    opportunity_id: str,
+    provider: str,
+    model_name: str,
+    prompt_hash: str,
+    raw_response: str,
+) -> SafeAIValidationResult:
+    return SafeAIValidationResult(
+        validation_id=_validation_id(
+            opportunity_id=opportunity_id,
+            provider=provider,
+            model_name=model_name,
+            prompt_hash=prompt_hash,
+            raw_response=raw_response,
+        ),
+        opportunity_id=opportunity_id,
+        technical_verdict=TechnicalVerdict.INVALID_RESPONSE,
+        confidence=0.0,
+        risk_factors=("invalid_or_unsafe_ai_response",),
+        rationale="AI validation response could not be safely parsed.",
+        parser_status=ParserStatus.FAILED,
+        provider=provider,
+        model_name=model_name,
+        prompt_hash=prompt_hash,
+        tokens_used=0,
+    )
+
+
+def _json_candidates(raw_response: str) -> tuple[tuple[str, ParserStatus], ...]:
+    stripped = raw_response.strip()
+    candidates: list[tuple[str, ParserStatus]] = []
+    if stripped.startswith("{") and stripped.endswith("}"):
+        candidates.append((stripped, ParserStatus.PARSED))
+
+    lowered = stripped.lower()
+    marker_start = lowered.find("```json")
+    marker_length = len("```json")
+    if marker_start < 0:
+        marker_start = lowered.find("```")
+        marker_length = len("```")
+    if marker_start >= 0:
+        content_start = marker_start + marker_length
+        marker_end = stripped.find("```", content_start)
+        if marker_end > content_start:
+            fenced = stripped[content_start:marker_end].strip()
+            if fenced:
+                candidates.append((fenced, ParserStatus.RECOVERED))
+
+    brace_start = stripped.find("{")
+    brace_end = stripped.rfind("}")
+    if brace_start >= 0 and brace_end > brace_start:
+        recovered = stripped[brace_start:brace_end + 1].strip()
+        if recovered and all(recovered != candidate for candidate, _ in candidates):
+            candidates.append((recovered, ParserStatus.RECOVERED))
+
+    return tuple(candidates)
+
+
+def _decode_ai_response(raw_response: str) -> tuple[dict[str, Any], ParserStatus] | None:
+    for candidate, parser_status in _json_candidates(raw_response):
+        try:
+            decoded = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, dict):
+            return decoded, parser_status
+    return None
+
+
+def _safe_result_from_ai_payload(
+    payload: Mapping[str, Any],
+    *,
+    parser_status: ParserStatus,
+    opportunity_id: str,
+    provider: str,
+    model_name: str,
+    prompt_hash: str,
+    raw_response: str,
+) -> SafeAIValidationResult:
+    response_payload = _require_payload(payload, allowed_fields=_AI_RESPONSE_FIELDS)
+    technical_verdict = _require_text(
+        str(response_payload["technical_verdict"]),
+        "technical_verdict",
+    )
+    if technical_verdict not in _AI_RESPONSE_VERDICTS:
+        raise ValueError("technical_verdict must be pass, review, or reject")
+
+    return SafeAIValidationResult(
+        validation_id=_validation_id(
+            opportunity_id=opportunity_id,
+            provider=provider,
+            model_name=model_name,
+            prompt_hash=prompt_hash,
+            raw_response=raw_response,
+        ),
+        opportunity_id=opportunity_id,
+        technical_verdict=technical_verdict,
+        confidence=response_payload["confidence"],
+        risk_factors=response_payload["risk_factors"],
+        rationale=response_payload["rationale"],
+        parser_status=parser_status,
+        provider=provider,
+        model_name=model_name,
+        prompt_hash=prompt_hash,
+        tokens_used=0,
+    )
+
+
+def parse_gemini_validation_response(
+    raw_response: str,
+    *,
+    opportunity_id: str,
+    provider: str = "fake",
+    model_name: str = "fake-gemini-validator-v1",
+    prompt_hash: str,
+) -> SafeAIValidationResult:
+    opportunity_id_clean = _require_text(opportunity_id, "opportunity_id")
+    provider_clean = _require_text(provider, "provider")
+    model_name_clean = _require_text(model_name, "model_name")
+    prompt_hash_clean = _require_text(prompt_hash, "prompt_hash")
+    raw_response_clean = "" if raw_response is None else str(raw_response)
+
+    fallback = _safe_failed_result(
+        opportunity_id=opportunity_id_clean,
+        provider=provider_clean,
+        model_name=model_name_clean,
+        prompt_hash=prompt_hash_clean,
+        raw_response=raw_response_clean,
+    )
+    if not raw_response_clean.strip():
+        return fallback
+
+    decoded = _decode_ai_response(raw_response_clean)
+    if decoded is None:
+        return fallback
+
+    payload, parser_status = decoded
+    try:
+        return _safe_result_from_ai_payload(
+            payload,
+            parser_status=parser_status,
+            opportunity_id=opportunity_id_clean,
+            provider=provider_clean,
+            model_name=model_name_clean,
+            prompt_hash=prompt_hash_clean,
+            raw_response=raw_response_clean,
+        )
+    except ValueError:
+        return fallback

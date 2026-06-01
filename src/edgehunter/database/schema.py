@@ -22,6 +22,7 @@ EXPECTED_TABLES: tuple[str, ...] = (
     "odds_snapshots",
     "scraper_health",
     "value_detections",
+    "gemini_validation_reports",
     "schema_version",
 )
 
@@ -96,6 +97,28 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
         "alerted",
         "inserted_at",
     ),
+    "gemini_validation_reports": (
+        "id",
+        "validation_id",
+        "opportunity_id",
+        "technical_verdict",
+        "confidence",
+        "risk_factors_json",
+        "rationale",
+        "parser_status",
+        "provider",
+        "model_name",
+        "prompt_hash",
+        "tokens_used",
+        "is_simulated",
+        "paper_trading",
+        "actionable",
+        "bet_placed",
+        "alerted",
+        "not_operational_advice",
+        "created_at",
+        "inserted_at",
+    ),
     "schema_version": (
         "version",
         "applied_at",
@@ -111,6 +134,9 @@ EXPECTED_INDEXES: tuple[str, ...] = (
     "idx_scraper_health_status",
     "idx_value_detections_match_created",
     "idx_value_detections_safety_flags",
+    "idx_gemini_validation_reports_opportunity",
+    "idx_gemini_validation_reports_model_prompt",
+    "idx_gemini_validation_reports_created",
 )
 
 SCHEMA_SQL = """
@@ -205,6 +231,36 @@ CREATE INDEX IF NOT EXISTS idx_value_detections_match_created
     ON value_detections(match_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_value_detections_safety_flags
     ON value_detections(is_simulated, paper_trading, actionable, bet_placed, alerted);
+
+CREATE TABLE IF NOT EXISTS gemini_validation_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    validation_id TEXT NOT NULL UNIQUE,
+    opportunity_id TEXT NOT NULL,
+    technical_verdict TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    risk_factors_json TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    parser_status TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    prompt_hash TEXT NOT NULL,
+    tokens_used INTEGER NOT NULL DEFAULT 0,
+    is_simulated INTEGER NOT NULL DEFAULT 1,
+    paper_trading INTEGER NOT NULL DEFAULT 1,
+    actionable INTEGER NOT NULL DEFAULT 0,
+    bet_placed INTEGER NOT NULL DEFAULT 0,
+    alerted INTEGER NOT NULL DEFAULT 0,
+    not_operational_advice INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inserted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_gemini_validation_reports_opportunity
+    ON gemini_validation_reports(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_gemini_validation_reports_model_prompt
+    ON gemini_validation_reports(provider, model_name, prompt_hash);
+CREATE INDEX IF NOT EXISTS idx_gemini_validation_reports_created
+    ON gemini_validation_reports(created_at);
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,

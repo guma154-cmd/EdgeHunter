@@ -3,12 +3,36 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 from typing import Any, Mapping
 
+from .value_detector import (
+    SimulatedValueOpportunity,
+    detect_value_consensus,
+    detect_value_vs_pinnacle,
+    detect_value_vs_poisson,
+)
+
 
 MIN_OFFERED_ODDS = 1.01
+BACKTEST_MODE_PINNACLE = "pinnacle"
+BACKTEST_MODE_POISSON = "poisson"
+BACKTEST_MODE_CONSENSUS = "consensus"
+SUPPORTED_BACKTEST_MODES = frozenset(
+    {
+        BACKTEST_MODE_PINNACLE,
+        BACKTEST_MODE_POISSON,
+        BACKTEST_MODE_CONSENSUS,
+    }
+)
+RESULT_BY_SELECTION = {
+    "home": "home_win",
+    "home_win": "home_win",
+    "draw": "draw",
+    "away": "away_win",
+    "away_win": "away_win",
+}
 
 
 def _require_text(value: str, field_name: str) -> str:
@@ -381,3 +405,220 @@ class BacktestRunResult:
             "paper_trading": self.paper_trading,
             "actionable": self.actionable,
         }
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _build_run_id(mode: str, started_at: datetime) -> str:
+    return f"bt-{mode}-{started_at.strftime('%Y%m%d%H%M%S%f')}"
+
+
+def _empty_metrics(total_analyzed: int = 0) -> BacktestMetrics:
+    return BacktestMetrics(
+        total_analyzed=total_analyzed,
+        total_opportunities=0,
+        total_hits=0,
+        total_false_positives=0,
+        hit_rate=0.0,
+        false_positive_rate=0.0,
+        coverage_rate=0.0,
+        average_expected_value=0.0,
+        average_edge_percentage=0.0,
+    )
+
+
+def _historical_match_to_snapshot(historical_match: Any) -> dict[str, Any]:
+    return {
+        "snapshot_id": historical_match.snapshot_id,
+        "match_id": historical_match.match_id,
+        "home_team": historical_match.home_team,
+        "away_team": historical_match.away_team,
+        "league": historical_match.league,
+        "valid_for_analysis": historical_match.valid_for_analysis,
+        "odds": {
+            bookmaker: dict(values)
+            for bookmaker, values in historical_match.odds.items()
+        },
+    }
+
+
+def _detect_opportunities(
+    *,
+    mode: str,
+    snapshot: dict[str, Any],
+    poisson_model: Any,
+    target_bookmaker: str,
+    min_ev: float,
+    require_sanity: bool,
+) -> list[SimulatedValueOpportunity]:
+    if mode == BACKTEST_MODE_PINNACLE:
+        return detect_value_vs_pinnacle(
+            snapshot,
+            target_bookmaker=target_bookmaker,
+            min_ev=min_ev,
+        )
+    if mode == BACKTEST_MODE_POISSON:
+        return detect_value_vs_poisson(
+            snapshot,
+            poisson_model=poisson_model,
+            target_bookmaker=target_bookmaker,
+            min_ev=min_ev,
+            require_sanity=require_sanity,
+        )
+    if mode == BACKTEST_MODE_CONSENSUS:
+        return detect_value_consensus(
+            snapshot,
+            poisson_model=poisson_model,
+            target_bookmaker=target_bookmaker,
+            min_ev=min_ev,
+            require_sanity=require_sanity,
+        )
+    raise ValueError(f"unsupported backtest mode: {mode}")
+
+
+def _selection_to_actual_result(selection: str) -> str:
+    selection_clean = _require_text(selection, "selection")
+    try:
+        return RESULT_BY_SELECTION[selection_clean]
+    except KeyError as exc:
+        raise ValueError(f"selection cannot be mapped to a result: {selection_clean}") from exc
+
+
+def _opportunity_to_selection_result(
+    opportunity: SimulatedValueOpportunity,
+    historical_match: Any,
+) -> BacktestSelectionResult:
+    mapped_result = _selection_to_actual_result(opportunity.selection)
+    actual_result = _require_text(historical_match.actual_result, "actual_result")
+    is_hit = mapped_result == actual_result
+
+    return BacktestSelectionResult(
+        match_id=opportunity.match_id,
+        market=opportunity.market,
+        selection=opportunity.selection,
+        source=opportunity.source,
+        detection_method=opportunity.detection_method,
+        predicted_probability=opportunity.true_probability,
+        offered_odds=opportunity.offered_odds,
+        expected_value=opportunity.expected_value,
+        edge_percentage=opportunity.edge_percentage,
+        actual_result=actual_result,
+        is_hit=is_hit,
+        is_false_positive=not is_hit,
+        evaluated_at=historical_match.snapshot_timestamp,
+    )
+
+
+def _group_selection_results(
+    selections: tuple[BacktestSelectionResult, ...],
+    field_name: str,
+) -> dict[str, dict[str, int]]:
+    grouped: dict[str, dict[str, int]] = {}
+    for selection in selections:
+        key = getattr(selection, field_name)
+        metrics = grouped.setdefault(
+            key,
+            {
+                "opportunities": 0,
+                "hits": 0,
+                "false_positives": 0,
+            },
+        )
+        metrics["opportunities"] += 1
+        metrics["hits"] += int(selection.is_hit)
+        metrics["false_positives"] += int(selection.is_false_positive)
+    return dict(sorted(grouped.items()))
+
+
+def _build_metrics(
+    *,
+    total_analyzed: int,
+    selections: tuple[BacktestSelectionResult, ...],
+) -> BacktestMetrics:
+    total_opportunities = len(selections)
+    if total_opportunities == 0:
+        return _empty_metrics(total_analyzed=total_analyzed)
+
+    total_hits = sum(int(selection.is_hit) for selection in selections)
+    total_false_positives = sum(
+        int(selection.is_false_positive)
+        for selection in selections
+    )
+    expected_value_total = sum(selection.expected_value for selection in selections)
+    edge_total = sum(selection.edge_percentage for selection in selections)
+
+    return BacktestMetrics(
+        total_analyzed=total_analyzed,
+        total_opportunities=total_opportunities,
+        total_hits=total_hits,
+        total_false_positives=total_false_positives,
+        hit_rate=total_hits / total_opportunities,
+        false_positive_rate=total_false_positives / total_opportunities,
+        coverage_rate=total_opportunities / total_analyzed if total_analyzed else 0.0,
+        average_expected_value=expected_value_total / total_opportunities,
+        average_edge_percentage=edge_total / total_opportunities,
+        by_source=_group_selection_results(selections, "source"),
+        by_detection_method=_group_selection_results(selections, "detection_method"),
+    )
+
+
+def run_value_detector_backtest(
+    dataset: list[Any],
+    poisson_model: Any = None,
+    mode: str = BACKTEST_MODE_CONSENSUS,
+    target_bookmaker: str = "bet365",
+    min_ev: float = 0.0,
+    require_sanity: bool = True,
+) -> BacktestRunResult:
+    started_at = _utc_now()
+    mode_clean = _require_text(mode, "mode").lower()
+    if mode_clean not in SUPPORTED_BACKTEST_MODES:
+        raise ValueError(f"unsupported backtest mode: {mode_clean}")
+    target_bookmaker_clean = _require_text(target_bookmaker, "target_bookmaker")
+
+    historical_matches = tuple(dataset)
+    if not historical_matches:
+        finished_at = _utc_now()
+        return BacktestRunResult(
+            run_id=_build_run_id(mode_clean, started_at),
+            started_at=started_at,
+            finished_at=finished_at,
+            metrics=_empty_metrics(),
+            selections=(),
+            warnings=("empty_dataset",),
+            reasons=("no_historical_matches_to_analyze",),
+        )
+
+    selections: list[BacktestSelectionResult] = []
+    for historical_match in historical_matches:
+        snapshot = _historical_match_to_snapshot(historical_match)
+        opportunities = _detect_opportunities(
+            mode=mode_clean,
+            snapshot=snapshot,
+            poisson_model=poisson_model,
+            target_bookmaker=target_bookmaker_clean,
+            min_ev=min_ev,
+            require_sanity=require_sanity,
+        )
+        selections.extend(
+            _opportunity_to_selection_result(opportunity, historical_match)
+            for opportunity in opportunities
+        )
+
+    selection_tuple = tuple(selections)
+    reasons = () if selection_tuple else ("no_opportunities_detected",)
+    finished_at = _utc_now()
+    return BacktestRunResult(
+        run_id=_build_run_id(mode_clean, started_at),
+        started_at=started_at,
+        finished_at=finished_at,
+        metrics=_build_metrics(
+            total_analyzed=len(historical_matches),
+            selections=selection_tuple,
+        ),
+        selections=selection_tuple,
+        warnings=(),
+        reasons=reasons,
+    )

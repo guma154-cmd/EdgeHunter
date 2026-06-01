@@ -63,14 +63,14 @@ def test_persist_is_idempotent(db_path):
     id2 = persist_simulated_signal_classification(db_path, result)
     assert id1 == id2
     
-    rows = list_simulated_signal_classifications(db_path)
+    rows = list_simulated_signal_classifications(db_path)["data"]
     assert len(rows) == 1
 
 def test_read_returns_persisted_classification(db_path):
     result = SimulatedSignalClassificationResult.from_dict(_valid_result_payload())
     persist_simulated_signal_classification(db_path, result)
     
-    rows = list_simulated_signal_classifications(db_path)
+    rows = list_simulated_signal_classifications(db_path)["data"]
     assert len(rows) == 1
     assert rows[0]["classification_id"] == "class-123"
 
@@ -80,7 +80,7 @@ def test_filter_by_simulation_label(db_path):
     persist_simulated_signal_classification(db_path, res1)
     persist_simulated_signal_classification(db_path, res2)
     
-    green_rows = list_simulated_signal_classifications(db_path, simulation_label="GREEN_SIM")
+    green_rows = list_simulated_signal_classifications(db_path, simulation_label="GREEN_SIM")["data"]
     assert len(green_rows) == 1
     assert green_rows[0]["classification_id"] == "class-g"
 
@@ -93,7 +93,7 @@ def test_filter_by_opportunity_id(db_path):
     persist_simulated_signal_classification(db_path, SimulatedSignalClassificationResult.from_dict(payload1))
     persist_simulated_signal_classification(db_path, SimulatedSignalClassificationResult.from_dict(payload2))
     
-    rows = list_simulated_signal_classifications(db_path, opportunity_id="opp-2")
+    rows = list_simulated_signal_classifications(db_path, opportunity_id="opp-2")["data"]
     assert len(rows) == 1
     assert rows[0]["opportunity_id"] == "opp-2"
 
@@ -106,7 +106,7 @@ def test_filter_by_signal_id(db_path):
     persist_simulated_signal_classification(db_path, SimulatedSignalClassificationResult.from_dict(payload1))
     persist_simulated_signal_classification(db_path, SimulatedSignalClassificationResult.from_dict(payload2))
     
-    rows = list_simulated_signal_classifications(db_path, signal_id="sig-2")
+    rows = list_simulated_signal_classifications(db_path, signal_id="sig-2")["data"]
     assert len(rows) == 1
     assert rows[0]["signal_id"] == "sig-2"
 
@@ -115,10 +115,10 @@ def test_pagination_works(db_path):
         res = SimulatedSignalClassificationResult.from_dict(_valid_result_payload(classification_id=f"c-{i}"))
         persist_simulated_signal_classification(db_path, res)
         
-    rows = list_simulated_signal_classifications(db_path, limit=3, offset=0)
+    rows = list_simulated_signal_classifications(db_path, limit=3, offset=0)["data"]
     assert len(rows) == 3
     # ordered by id desc, so latest first
-    rows2 = list_simulated_signal_classifications(db_path, limit=3, offset=3)
+    rows2 = list_simulated_signal_classifications(db_path, limit=3, offset=3)["data"]
     assert len(rows2) == 3
     assert rows[0]["id"] != rows2[0]["id"]
 
@@ -133,14 +133,14 @@ def test_risk_factors_is_serialized_as_json(db_path):
     
     assert raw_json == '["risk 1", "risk 2"]'
     
-    rows = list_simulated_signal_classifications(db_path)
+    rows = list_simulated_signal_classifications(db_path)["data"]
     assert rows[0]["risk_factors"] == ["risk 1", "risk 2"]
 
 def test_security_flags_are_preserved(db_path):
     result = SimulatedSignalClassificationResult.from_dict(_valid_result_payload())
     persist_simulated_signal_classification(db_path, result)
     
-    rows = list_simulated_signal_classifications(db_path)
+    rows = list_simulated_signal_classifications(db_path)["data"]
     r = rows[0]
     assert r["is_simulated"] is True
     assert r["paper_trading"] is True

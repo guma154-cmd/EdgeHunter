@@ -98,7 +98,7 @@ def list_value_detections(
         }
     }
 
-@router.get("/api/value-detections", dependencies=[Depends(get_api_key)])
+@router.get("/api/value-detections", dependencies=[Depends(get_api_key)], tags=["value-detections"])
 def get_value_detections(
     limit: int = Query(50, gt=0),
     offset: int = Query(0, ge=0),
@@ -151,7 +151,7 @@ def get_value_detection_by_id(db_path: str, detection_id: int) -> dict | None:
 
     return row_dict
 
-@router.get("/api/value-detections/{id}", dependencies=[Depends(get_api_key)])
+@router.get("/api/value-detections/{id}", dependencies=[Depends(get_api_key)], tags=["value-detections"])
 def get_value_detection(id: int):
     try:
         db_path = get_db_path()
@@ -184,7 +184,7 @@ def list_backtests(limit: int = 50, offset: int = 0) -> dict:
         "filters": {}
     }
 
-@router.get("/api/backtests", dependencies=[Depends(get_api_key)])
+@router.get("/api/backtests", dependencies=[Depends(get_api_key)], tags=["backtests"])
 def get_backtests(
     limit: int = Query(50, gt=0),
     offset: int = Query(0, ge=0),

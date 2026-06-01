@@ -164,3 +164,37 @@ def get_value_detection(id: int):
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def list_backtests(limit: int = 50, offset: int = 0) -> dict:
+    if limit <= 0:
+        raise ValueError("limit must be > 0")
+    if limit > 100:
+        limit = 100
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+
+    return {
+        "data": [],
+        "pagination": {
+            "limit": limit,
+            "offset": offset,
+            "count": 0,
+            "total": 0,
+            "has_more": False
+        },
+        "filters": {}
+    }
+
+@router.get("/api/backtests", dependencies=[Depends(get_api_key)])
+def get_backtests(
+    limit: int = Query(50, gt=0),
+    offset: int = Query(0, ge=0),
+):
+    try:
+        result = list_backtests(limit=limit, offset=offset)
+        return build_safe_api_response(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+

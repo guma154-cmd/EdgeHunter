@@ -56,30 +56,30 @@ def list_value_detections(
 
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        
+
         cursor = conn.execute(query, params)
         rows = cursor.fetchall()
-        
+
         cursor = conn.execute(count_query, count_params)
         total_count = cursor.fetchone()[0]
 
     data = []
     for row in rows:
         row_dict = dict(row)
-        
+
         if row_dict.get("actionable") == 1 or row_dict.get("bet_placed") == 1 or row_dict.get("alerted") == 1:
             raise RuntimeError("Database contains unsafe operational flags (actionable=1, bet_placed=1, alerted=1). Security corruption detected.")
-            
+
         row_dict["is_simulated"] = bool(row_dict.get("is_simulated", True))
         row_dict["paper_trading"] = bool(row_dict.get("paper_trading", True))
         row_dict["actionable"] = bool(row_dict.get("actionable", False))
         row_dict["bet_placed"] = bool(row_dict.get("bet_placed", False))
         row_dict["alerted"] = bool(row_dict.get("alerted", False))
-        
+
         for k in ["stake", "kelly", "kelly_criterion", "bankroll", "bet_amount", "wager", "suggested_bet", "recommended_bet"]:
             if k in row_dict:
                 raise RuntimeError(f"Database contains forbidden financial field: {k}")
-        
+
         data.append(row_dict)
 
     return {
@@ -121,3 +121,46 @@ def get_value_detections(
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def get_value_detection_by_id(db_path: str, detection_id: int) -> dict | None:
+    if detection_id <= 0:
+        raise ValueError("id must be positive")
+
+    query = "SELECT * FROM value_detections WHERE id = ?"
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(query, (detection_id,))
+        row = cursor.fetchone()
+
+    if not row:
+        return None
+
+    row_dict = dict(row)
+    if row_dict.get("actionable") == 1 or row_dict.get("bet_placed") == 1 or row_dict.get("alerted") == 1:
+        raise RuntimeError("Database contains unsafe operational flags (actionable=1, bet_placed=1, alerted=1). Security corruption detected.")
+
+    row_dict["is_simulated"] = bool(row_dict.get("is_simulated", True))
+    row_dict["paper_trading"] = bool(row_dict.get("paper_trading", True))
+    row_dict["actionable"] = bool(row_dict.get("actionable", False))
+    row_dict["bet_placed"] = bool(row_dict.get("bet_placed", False))
+    row_dict["alerted"] = bool(row_dict.get("alerted", False))
+
+    for k in ["stake", "kelly", "kelly_criterion", "bankroll", "bet_amount", "wager", "suggested_bet", "recommended_bet"]:
+        if k in row_dict:
+            raise RuntimeError(f"Database contains forbidden financial field: {k}")
+
+    return row_dict
+
+@router.get("/api/value-detections/{id}", dependencies=[Depends(get_api_key)])
+def get_value_detection(id: int):
+    try:
+        db_path = get_db_path()
+        result = get_value_detection_by_id(db_path, id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Detection not found")
+        return build_safe_api_response(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

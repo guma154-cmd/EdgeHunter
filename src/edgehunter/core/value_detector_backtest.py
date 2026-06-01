@@ -33,6 +33,10 @@ RESULT_BY_SELECTION = {
     "away": "away_win",
     "away_win": "away_win",
 }
+REPORT_FORMAT_DICT = "dict"
+REPORT_FORMAT_MARKDOWN = "markdown"
+SUPPORTED_REPORT_FORMATS = frozenset({REPORT_FORMAT_DICT, REPORT_FORMAT_MARKDOWN})
+DEFAULT_REPORT_SELECTION_SAMPLE_LIMIT = 5
 
 
 def _require_text(value: str, field_name: str) -> str:
@@ -622,6 +626,164 @@ def calculate_backtest_metrics(
             "detection_method",
         ),
     )
+
+
+def _report_safety_payload() -> dict[str, str]:
+    return {
+        "paper_trading": "paper trading local",
+        "simulation": "simulacao tecnica",
+        "not_operational_recommendation": "nao e recomendacao operacional",
+        "no_real_operation": "nao autoriza operacao real",
+        "no_financial_sizing": "nao contem dimensionamento financeiro",
+        "no_capital_formula": "nao contem formula de fracao de capital",
+        "no_balance_management": "nao contem gestao de saldo",
+        "no_execution": "nao executa operacao",
+        "no_alerting": "nao envia alerta",
+        "no_public_interface": "nao expoe interface publica",
+    }
+
+
+def _report_selection_sample(
+    result: BacktestRunResult,
+) -> list[dict[str, Any]]:
+    return [
+        selection.to_dict()
+        for selection in result.selections[:DEFAULT_REPORT_SELECTION_SAMPLE_LIMIT]
+    ]
+
+
+def _build_report_payload(result: BacktestRunResult) -> dict[str, Any]:
+    metrics = result.metrics.to_dict()
+    return {
+        "run_id": result.run_id,
+        "started_at": result.started_at.isoformat(),
+        "finished_at": result.finished_at.isoformat(),
+        "status": {
+            "is_simulated": result.is_simulated,
+            "paper_trading": result.paper_trading,
+            "actionable": result.actionable,
+        },
+        "safety": _report_safety_payload(),
+        "metrics": metrics,
+        "by_source": metrics["by_source"],
+        "by_detection_method": metrics["by_detection_method"],
+        "warnings": list(result.warnings),
+        "reasons": list(result.reasons),
+        "selection_sample": _report_selection_sample(result),
+        "selection_sample_limit": DEFAULT_REPORT_SELECTION_SAMPLE_LIMIT,
+        "total_selections": len(result.selections),
+        "is_simulated": result.is_simulated,
+        "paper_trading": result.paper_trading,
+        "actionable": result.actionable,
+    }
+
+
+def _format_grouped_metrics(
+    grouped: Mapping[str, Mapping[str, int | float]],
+) -> list[str]:
+    if not grouped:
+        return ["- nenhum agrupamento"]
+    return [
+        (
+            f"- {key}: total_opportunities={values['total_opportunities']}; "
+            f"total_hits={values['total_hits']}; "
+            f"total_false_positives={values['total_false_positives']}; "
+            f"hit_rate={values['hit_rate']}; "
+            f"false_positive_rate={values['false_positive_rate']}; "
+            f"average_expected_value={values['average_expected_value']}; "
+            f"average_edge_percentage={values['average_edge_percentage']}"
+        )
+        for key, values in sorted(grouped.items())
+    ]
+
+
+def _format_selection_sample(selection_sample: list[dict[str, Any]]) -> list[str]:
+    if not selection_sample:
+        return ["- nenhuma selecao"]
+    return [
+        (
+            f"- {selection['match_id']} {selection['market']} "
+            f"{selection['selection']}: hit={selection['is_hit']}; "
+            f"false_positive={selection['is_false_positive']}; "
+            f"expected_value={selection['expected_value']}; "
+            f"edge_percentage={selection['edge_percentage']}"
+        )
+        for selection in selection_sample
+    ]
+
+
+def _format_markdown_report(payload: Mapping[str, Any]) -> str:
+    metrics = payload["metrics"]
+    status = payload["status"]
+    safety = payload["safety"]
+    lines = [
+        "# Relatorio local de paper trading",
+        "",
+        f"- Run ID: {payload['run_id']}",
+        f"- Inicio: {payload['started_at']}",
+        f"- Fim: {payload['finished_at']}",
+        "",
+        "## Status",
+        f"- Simulacao: {str(status['is_simulated']).lower()}",
+        f"- Paper trading: {str(status['paper_trading']).lower()}",
+        f"- Acionavel: {str(status['actionable']).lower()}",
+        "",
+        "## Avisos de seguranca",
+    ]
+    lines.extend(f"- {value}" for value in safety.values())
+    lines.extend(
+        [
+            "",
+            "## Metricas",
+            f"- Total analisado: {metrics['total_analyzed']}",
+            f"- Total de oportunidades: {metrics['total_opportunities']}",
+            f"- Total de acertos: {metrics['total_hits']}",
+            f"- Total de falsos positivos: {metrics['total_false_positives']}",
+            f"- Taxa de acerto: {metrics['hit_rate']}",
+            f"- Taxa de falso positivo: {metrics['false_positive_rate']}",
+            f"- Cobertura: {metrics['coverage_rate']}",
+            f"- EV medio: {metrics['average_expected_value']}",
+            f"- Edge medio: {metrics['average_edge_percentage']}",
+            "",
+            "## Por fonte",
+        ],
+    )
+    lines.extend(_format_grouped_metrics(payload["by_source"]))
+    lines.extend(["", "## Por metodo de deteccao"])
+    lines.extend(_format_grouped_metrics(payload["by_detection_method"]))
+    lines.extend(
+        [
+            "",
+            "## Avisos",
+            *(f"- {warning}" for warning in payload["warnings"]),
+            "",
+            "## Razoes",
+            *(f"- {reason}" for reason in payload["reasons"]),
+            "",
+            "## Amostra limitada de selecoes",
+            f"- Limite: {payload['selection_sample_limit']}",
+            f"- Total de selecoes: {payload['total_selections']}",
+        ],
+    )
+    lines.extend(_format_selection_sample(payload["selection_sample"]))
+    return "\n".join(lines)
+
+
+def generate_paper_trading_report(
+    result: BacktestRunResult,
+    format: str = REPORT_FORMAT_DICT,
+) -> dict[str, Any] | str:
+    if not isinstance(result, BacktestRunResult):
+        raise ValueError("result must be a BacktestRunResult")
+
+    format_clean = _require_text(format, "format").lower()
+    if format_clean not in SUPPORTED_REPORT_FORMATS:
+        raise ValueError(f"unsupported report format: {format_clean}")
+
+    payload = _build_report_payload(result)
+    if format_clean == REPORT_FORMAT_DICT:
+        return payload
+    return _format_markdown_report(payload)
 
 
 def run_value_detector_backtest(

@@ -95,6 +95,7 @@ def test_to_dict_returns_required_fields() -> None:
     assert opportunity_dict == {
         "opportunity_id": opportunity_dict["opportunity_id"],
         "match_id": "match-001",
+        "snapshot_id": None,
         "market": "1x2",
         "selection": "home_win",
         "true_probability": 0.6,

@@ -56,6 +56,7 @@ def test_schema_creates_value_detections_table(tmp_path: Path) -> None:
         "id",
         "opportunity_id",
         "match_id",
+        "snapshot_id",
         "market",
         "selection",
         "true_probability",

@@ -43,6 +43,7 @@ def _opportunity_row(opportunity: SimulatedValueOpportunity) -> tuple[Any, ...]:
     return (
         _require_text(opportunity.opportunity_id, "opportunity_id"),
         _require_text(opportunity.match_id, "match_id"),
+        opportunity.snapshot_id,
         _require_text(opportunity.market, "market"),
         _require_text(opportunity.selection, "selection"),
         opportunity.true_probability,
@@ -74,6 +75,7 @@ def _insert_simulated_opportunity_rows(
                 INSERT OR IGNORE INTO value_detections (
                     opportunity_id,
                     match_id,
+                    snapshot_id,
                     market,
                     selection,
                     true_probability,
@@ -88,7 +90,7 @@ def _insert_simulated_opportunity_rows(
                     actionable,
                     bet_placed,
                     alerted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 row,
             )

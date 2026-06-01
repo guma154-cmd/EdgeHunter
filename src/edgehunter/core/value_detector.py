@@ -185,6 +185,8 @@ def detect_value_vs_pinnacle(
 ) -> list[SimulatedValueOpportunity]:
     clean_min_ev = _normalize_min_ev(min_ev)
     match_id = _require_text(str(snapshot.get("match_id", "")), "match_id")
+    raw_snapshot_id = snapshot.get("id") or snapshot.get("snapshot_id")
+    snapshot_id = int(raw_snapshot_id) if raw_snapshot_id is not None else None
     target_bookmaker_clean = _require_text(target_bookmaker, "target_bookmaker")
     market_clean = _require_text(market, "market")
 
@@ -225,6 +227,7 @@ def detect_value_vs_pinnacle(
                 edge_percentage=expected_value * 100.0,
                 source=PINNACLE_SOURCE,
                 detection_method=PINNACLE_DETECTION_METHOD,
+                snapshot_id=snapshot_id,
             )
         )
 
@@ -296,6 +299,8 @@ def detect_value_vs_poisson(
 ) -> list[SimulatedValueOpportunity]:
     clean_min_ev = _normalize_min_ev(min_ev)
     match_id = _require_text(str(snapshot.get("match_id", "")), "match_id")
+    raw_snapshot_id = snapshot.get("id") or snapshot.get("snapshot_id")
+    snapshot_id = int(raw_snapshot_id) if raw_snapshot_id is not None else None
     home_team = _require_text(str(snapshot.get("home_team", "")), "home_team")
     away_team = _require_text(str(snapshot.get("away_team", "")), "away_team")
     target_bookmaker_clean = _require_text(target_bookmaker, "target_bookmaker")
@@ -349,6 +354,7 @@ def detect_value_vs_poisson(
                 edge_percentage=expected_value * 100.0,
                 source=POISSON_SOURCE,
                 detection_method=POISSON_DETECTION_METHOD,
+                snapshot_id=snapshot_id,
             )
         )
 
@@ -421,6 +427,7 @@ def detect_value_consensus(
                 edge_percentage=conservative_edge,
                 source=CONSENSUS_SOURCE,
                 detection_method=CONSENSUS_DETECTION_METHOD,
+                snapshot_id=pinnacle_opportunity.snapshot_id,
             )
         )
 
@@ -521,6 +528,7 @@ class SimulatedValueOpportunity:
     source: str
     detection_method: str
     opportunity_id: str | None = None
+    snapshot_id: int | None = None
     created_at: str | None = None
     is_simulated: bool = True
     paper_trading: bool = True
@@ -568,6 +576,7 @@ class SimulatedValueOpportunity:
             if self.created_at is not None
             else _utc_now_iso()
         )
+        snapshot_id_clean = int(self.snapshot_id) if self.snapshot_id is not None else None
 
         object.__setattr__(self, "match_id", match_id)
         object.__setattr__(self, "market", market)
@@ -579,12 +588,14 @@ class SimulatedValueOpportunity:
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "detection_method", detection_method)
         object.__setattr__(self, "opportunity_id", opportunity_id)
+        object.__setattr__(self, "snapshot_id", snapshot_id_clean)
         object.__setattr__(self, "created_at", created_at)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "opportunity_id": self.opportunity_id,
             "match_id": self.match_id,
+            "snapshot_id": self.snapshot_id,
             "market": self.market,
             "selection": self.selection,
             "true_probability": self.true_probability,

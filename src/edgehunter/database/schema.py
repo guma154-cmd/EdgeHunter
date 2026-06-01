@@ -79,6 +79,7 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
         "id",
         "opportunity_id",
         "match_id",
+        "snapshot_id",
         "market",
         "selection",
         "true_probability",
@@ -181,6 +182,7 @@ CREATE TABLE IF NOT EXISTS value_detections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     opportunity_id TEXT NOT NULL UNIQUE,
     match_id TEXT NOT NULL,
+    snapshot_id INTEGER,
     market TEXT NOT NULL,
     selection TEXT NOT NULL,
     true_probability REAL NOT NULL,
@@ -195,7 +197,8 @@ CREATE TABLE IF NOT EXISTS value_detections (
     actionable INTEGER NOT NULL DEFAULT 0,
     bet_placed INTEGER NOT NULL DEFAULT 0,
     alerted INTEGER NOT NULL DEFAULT 0,
-    inserted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    inserted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (snapshot_id) REFERENCES odds_snapshots(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_value_detections_match_created

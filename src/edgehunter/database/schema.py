@@ -23,6 +23,7 @@ EXPECTED_TABLES: tuple[str, ...] = (
     "scraper_health",
     "value_detections",
     "gemini_validation_reports",
+    "simulated_signal_classifications",
     "schema_version",
 )
 
@@ -119,6 +120,28 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
         "created_at",
         "inserted_at",
     ),
+    "simulated_signal_classifications": (
+        "id",
+        "classification_id",
+        "signal_id",
+        "opportunity_id",
+        "simulation_label",
+        "calibrated_assertiveness",
+        "confidence",
+        "threshold_green",
+        "learning_mode",
+        "display",
+        "rationale",
+        "risk_factors_json",
+        "is_simulated",
+        "paper_trading",
+        "actionable",
+        "bet_placed",
+        "alerted",
+        "not_operational_advice",
+        "created_at",
+        "inserted_at",
+    ),
     "schema_version": (
         "version",
         "applied_at",
@@ -137,6 +160,8 @@ EXPECTED_INDEXES: tuple[str, ...] = (
     "idx_gemini_validation_reports_opportunity",
     "idx_gemini_validation_reports_model_prompt",
     "idx_gemini_validation_reports_created",
+    "idx_simulated_signal_classifications_opportunity",
+    "idx_simulated_signal_classifications_signal",
 )
 
 SCHEMA_SQL = """
@@ -261,6 +286,34 @@ CREATE INDEX IF NOT EXISTS idx_gemini_validation_reports_model_prompt
     ON gemini_validation_reports(provider, model_name, prompt_hash);
 CREATE INDEX IF NOT EXISTS idx_gemini_validation_reports_created
     ON gemini_validation_reports(created_at);
+
+CREATE TABLE IF NOT EXISTS simulated_signal_classifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    classification_id TEXT NOT NULL UNIQUE,
+    signal_id TEXT NOT NULL,
+    opportunity_id TEXT NOT NULL,
+    simulation_label TEXT NOT NULL,
+    calibrated_assertiveness REAL NOT NULL,
+    confidence REAL NOT NULL,
+    threshold_green REAL NOT NULL,
+    learning_mode INTEGER NOT NULL DEFAULT 1,
+    display INTEGER NOT NULL DEFAULT 1,
+    rationale TEXT NOT NULL,
+    risk_factors_json TEXT NOT NULL,
+    is_simulated INTEGER NOT NULL DEFAULT 1,
+    paper_trading INTEGER NOT NULL DEFAULT 1,
+    actionable INTEGER NOT NULL DEFAULT 0,
+    bet_placed INTEGER NOT NULL DEFAULT 0,
+    alerted INTEGER NOT NULL DEFAULT 0,
+    not_operational_advice INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    inserted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_simulated_signal_classifications_opportunity
+    ON simulated_signal_classifications(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_simulated_signal_classifications_signal
+    ON simulated_signal_classifications(signal_id);
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,

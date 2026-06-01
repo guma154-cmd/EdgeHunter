@@ -380,3 +380,103 @@ def classify_simulated_signal(
         rationale=f"Classificacao processada de forma segura e deterministica",
         risk_factors=["Risco de backtest simulado"],
     )
+
+def calculate_calibrated_assertiveness(
+    historical_signals: list[dict[str, Any]],
+    *,
+    min_sample_size: int = 10,
+    fallback_assertiveness: float = 0.0,
+) -> float:
+    if not isinstance(min_sample_size, int) or isinstance(min_sample_size, bool):
+        raise ValueError("min_sample_size must be an integer")
+    if min_sample_size <= 0:
+        raise ValueError("min_sample_size must be >= 1")
+    _require_probability(fallback_assertiveness, "fallback_assertiveness")
+    
+    if not isinstance(historical_signals, list):
+        raise ValueError("historical_signals must be a list")
+    
+    if not historical_signals:
+        return fallback_assertiveness
+
+    total_valid = 0
+    total_successes = 0
+
+    for item in historical_signals:
+        if not isinstance(item, dict):
+            raise ValueError("historical signal item must be a dict")
+            
+        if item.get("actionable") is True:
+            raise ValueError("historical signal must not be actionable")
+        if item.get("bet_placed") is True:
+            raise ValueError("historical signal must not have bet_placed=True")
+        if item.get("alerted") is True:
+            raise ValueError("historical signal must not have alerted=True")
+            
+        for k in item.keys():
+            if _has_blocked_term(str(k)):
+                raise ValueError("historical signal contains forbidden field")
+        
+        for v in item.values():
+            if isinstance(v, str) and _has_blocked_term(v):
+                raise ValueError("historical signal contains forbidden content")
+
+        if "was_successful" not in item:
+            raise ValueError("historical signal must contain was_successful")
+            
+        was_successful = item["was_successful"]
+        if not isinstance(was_successful, bool):
+            raise ValueError("was_successful must be boolean")
+
+        total_valid += 1
+        if was_successful:
+            total_successes += 1
+
+    if total_valid < min_sample_size:
+        return fallback_assertiveness
+
+    return float(total_successes) / float(total_valid)
+
+
+def build_classification_input_from_calibration(
+    *,
+    signal_id: str,
+    opportunity_id: str,
+    match_id: str,
+    market: str,
+    selection: str,
+    source: str,
+    detection_method: str,
+    historical_signals: list[dict[str, Any]],
+    confidence: float,
+    expected_value: float,
+    edge_percentage: float,
+    recent_hit_rate: float,
+    recent_false_positive_rate: float,
+    sample_size: int | None = None,
+) -> SimulatedSignalClassificationInput:
+    
+    if sample_size is None:
+        sample_size = len(historical_signals)
+        
+    calibrated_assertiveness = calculate_calibrated_assertiveness(historical_signals)
+    
+    return SimulatedSignalClassificationInput(
+        signal_id=signal_id,
+        opportunity_id=opportunity_id,
+        match_id=match_id,
+        market=market,
+        selection=selection,
+        source=source,
+        detection_method=detection_method,
+        calibrated_assertiveness=calibrated_assertiveness,
+        confidence=confidence,
+        expected_value=expected_value,
+        edge_percentage=edge_percentage,
+        recent_hit_rate=recent_hit_rate,
+        recent_false_positive_rate=recent_false_positive_rate,
+        sample_size=sample_size,
+        is_simulated=True,
+        paper_trading=True,
+        actionable=False,
+    )

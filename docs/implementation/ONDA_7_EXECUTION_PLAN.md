@@ -4,118 +4,113 @@
 
 Escolher:
 
-* [ ] APROVADO PARA COMEÇAR ONDA 7
-* [x] APROVADO COM RESSALVAS
+* [x] APROVADO PARA COMEÇAR ONDA 7
+* [ ] APROVADO COM RESSALVAS
 * [ ] NÃO APROVADO
-
-(Ressalva: as validações apontaram links locais quebrados no relatório da Onda 6 devido a marcações absolutas `file:///...`, que precisam ser tratadas no CI/doc, mas a lógica e o negócio estão aprovados para evoluir.)
 
 ## 2. Objetivo da Onda 7
 
-Adicionar um **cliente real** do Gemini (`RealGeminiValidationClient`) na infraestrutura já segura construída na Onda 6, garantindo proteção financeira via controle de quotas, timeout e failover local síncrono. O objetivo é testar a rede em produção, provando que o EdgeHunter consegue obter respostas do Gemini sem ultrapassar limites, sem quebrar perante lentidões da IA, e sem gerar conselhos operacionais. 
+Onda 7 — Simulated Green/Red Classifier.
 
-O cliente real só deve ser habilitado ativamente quando `GEMINI_API_KEY` estiver presente e o usuário optar por usá-lo.
+O objetivo técnico principal desta onda é transformar a validação da IA em uma classificação simulada rigorosa e binária, baseada no estudo histórico de contexto. O plano anterior de integração contínua de rede real do Gemini foi substituído pelo foco em aprendizado histórico ("learning mode").
+
+O sistema preservará o Gemini/IA como revisor técnico e integrará sua avaliação (a `confidence`) com dados históricos — agrupamentos técnicos, backtests e falsos positivos passados — para derivar a `calibrated_assertiveness`. O resultado final será um label rigoroso:
+- **GREEN_SIM**: Sinais simulados com assertividade calibrada >= 70%.
+- **RED_SIM**: Sinais simulados com assertividade calibrada < 70%.
+
+Zonas neutras não são permitidas.
 
 ## 3. Decisão de rota
 
-A rota escolhida é a **Opção D — Onda híbrida**. 
-Criaremos o cliente real mockável, controles de cota, timeout e fallback para o cliente fake. O sistema, mesmo após a Onda 7, não disparará apostas reais; continuaremos com paper trading e sem recomendação de stake/Kelly (esses temas permanecem fora do Gemini). A Onda 7 fecha o ciclo técnico da IA introduzindo a rede de forma totalmente governada.
+A rota agora foca na **Classificação Simulada Binária e Aprendizado Histórico**.
+A IA fornece a análise técnica, e o sistema cruza esses dados com a resiliência histórica do sistema para obter a `calibrated_assertiveness`. O foco é estudar acertos e erros, ajustar algoritmos para prever falsos positivos e negativos de forma empírica e manter as execuções restritas ao estudo não operacional.
 
 ## 4. Dependências externas
 
-- **Biblioteca**: `google-generativeai`.
-- **Inclusão**: Deve ser adicionada em `pyproject.toml` como dependência principal de `runtime`, mas o sistema deve degradar para "fake" graciosamente se ela falhar ou se não houver chave.
-- O SDK só deve ser instanciado no `RealGeminiValidationClient`.
+A adoção real da API do Gemini (e o SDK `google-generativeai`) pode prosseguir se útil para mock/integração síncrona offline de relatórios, mas o "Gemini real operacional" não é mais o foco da camada de classificação. O esforço se concentra no cálculo de probabilidade condicionada com base na análise textual, não no transporte HTTP.
 
 ## 5. Segurança de segredo/API key
 
-- A chave da API deve ser carregada via variável de ambiente `GEMINI_API_KEY` a partir do `.env`.
-- **Proibido:** hardcode, passagem explícita no código fonte como string, commit da chave ou log da mesma.
-- Testes unitários NÃO devem ler do `.env` real nem atingir a API. Devem injetar Mocks ou chaves sintéticas.
-- Caso a API key não exista, a inicialização do cliente real falha defensivamente e volta ao modo fake.
+Nenhuma configuração de rede exposta ao pipeline principal; qualquer teste ou mock deve respeitar a premissa de que a rede real pode ser trocada e a chave da API deve vir unicamente do `.env` e nunca logada.
 
 ## 6. Timeout, retry e fallback
 
-Conforme PRD-04:
-- **Timeout**: Máximo de 10 segundos por chamada.
-- **Retry**: Decorator/logica com exponential backoff (ex: 1s, 2s, 4s), máximo de 3 tentativas por chamada.
-- **Fallback**: Se todos os retries falharem, ou se houver esgotamento de quota ou RateLimit (429), o cliente degrada para o _fallback determinístico_ (`FakeGeminiValidationClient` ou retorno `unavailable`/`SEM_VALIDACAO_IA`), logando o evento.
+Se a análise não for possível, o classificador fará `fail-closed` para `RED_SIM` (assertividade forçada a 0), priorizando proteção matemática perante a incerteza do sistema.
 
 ## 7. Cotas e custos
 
-Estratégia de orçamento de Tokens:
-- **Limite mensal**: 1.600.000 tokens (para proteger 80% do Free Tier de 2M).
-- **Monitoramento**: Antes de chamar o Gemini real, checar se a cota do mês corrente foi esgotada.
-- **Recusa:** Se o teto for atingido, negar a chamada de rede e devolver fallback imediatamente.
+Como o objetivo é focar em classificação simulada histórica, processaremos massivamente dados de backtest já contidos no SQLite, garantindo não gerar custos de transação desnecessários em endpoints de terceiros.
 
 ## 8. Persistência de usage
 
-- Uma nova tabela `gemini_token_usage` (com chave mês_ano) deve ser adicionada ao schema para consolidar os tokens.
-- O relatório IA da oportunidade, em `gemini_validation_reports.tokens_used`, já existe no banco e deverá ser preenchido com o metadata retornado pelo provedor real.
+Os esquemas e DTOs deverão acomodar os novos campos exigidos:
+* `simulation_label`: GREEN_SIM | RED_SIM
+* `calibrated_assertiveness`: float entre 0.0 e 1.0
+* `confidence`: float entre 0.0 e 1.0 (já existente, derivado da revisão técnica)
+* `learning_mode`: true
+* `display`: true
+* Campos de segurança mantidos: `is_simulated: true`, `paper_trading: true`, `actionable: false`, `bet_placed: false`, `alerted: false`, `not_operational_advice: true`.
 
 ## 9. Stories propostas
 
 | Ordem | Story | Objetivo | Observação |
 | ----: | ----- | -------- | ---------- |
-| 1 | **STORY-07-001** | Controle de cota de tokens | Criar tabela de usage mensal, tracking e lógica de recusa ao atingir o budget de 1.6M. |
-| 2 | **STORY-07-002** | Dependência oficial e configuração de chave | Atualizar `pyproject.toml` com SDK, ler chave do ambiente sem logar e sem hardcode. |
-| 3 | **STORY-07-003** | `RealGeminiValidationClient` com retry e timeout | Cliente que faz a requisição de rede, implementando backoff e limite de 10s, retornando payload cru. |
-| 4 | **STORY-07-004** | Orquestração híbrida com Fallback dinâmico | Integrar cliente real, parser, token tracking e downgrade para FakeClient em caso de erro. |
-| 5 | **STORY-07-005** | Testes e liberação | Suítes de mock, testes adversariais de rede (simular Timeout) e teste opcional/skips de integração real. |
+| 1 | **STORY-07-001** | Contrato do Green/Red Classifier | Atualizar DTOs e entidades com os novos labels, flags (`learning_mode`, `display`) e a taxonomia rigorosa sem zona neutra. |
+| 2 | **STORY-07-002** | Motor de Assertividade Calibrada | Implementar regra `>= 70%` para `GREEN_SIM` usando lógica empírica baseada no histórico. |
+| 3 | **STORY-07-003** | Persistência dos Labels de Aprendizado | Adicionar colunas `simulation_label`, `calibrated_assertiveness`, `learning_mode` e `display` no schema do DB SQLite. |
+| 4 | **STORY-07-004** | Estudo de Acertos, Falsos Positivos e Falsos Negativos | Implementar métricas focadas no estudo quantitativo das categorizações GREEN/RED_SIM frente aos resultados reais das partidas passadas. |
+| 5 | **STORY-07-005** | Geração de Relatórios Técnicos | Consolidar endpoints/rotinas para exportar ou consultar o estudo histórico focado no aprendizado do algoritmo. |
 
 ## 10. Estratégia de testes
 
-- **Unitários com Mock**: Testar a lógica de backoff e timeouts lançando exceções simuladas. `google.generativeai` deve ser "monkeypatched".
-- **Contrato e Sanitização**: Garantir que as restrições da Onda 6 não quebraram.
-- **Testes de Orçamento**: Validar parada síncrona ao atingir o limite na tabela.
-- **Integração Real (Opcional)**: Um teste específico, desabilitado por padrão (e.g. `@pytest.mark.integration`), para rodar o fluxo completo apenas quando autorizado.
+* **Mock do Classificador**: Validar cenários onde uma alta `confidence` da IA é sobreposta e corrigida por uma baixa `calibrated_assertiveness` (forçando `RED_SIM`) devido ao histórico ruim do agrupamento técnico.
+* **Teste de Rigidez**: Evidenciar falha do parser e fail-close se tentar atribuir uma "zona neutra" ou um veredito intermediário.
+* **Testes de Segurança**: Validar estaticamente as propriedades `actionable=False` e `learning_mode=True`.
 
 ## 11. Guardrails de linguagem
 
-- O prompt validado e encurtado na Onda 6 será reutilizado (garante disclaimer explícito de "não operacional").
-- O parser seguro da Onda 6, que possui `_BLOCKED_TERMS`, impedirá vazamentos de "stake", "aposta", "recomendação", etc., caso o Gemini ignore o prompt.
-- As flags `actionable=False` e `is_simulated=True` continuam hardcoded nos contratos de entrada e saída.
+A terminologia do sistema abandona conselhos operacionais ou predições. Passa a lidar puramente em termos de estatística de backtest: "Simulation Label", "Calibrated Assertiveness", "Learning Mode".
 
 ## 12. Escopo proibido
 
-- Aposta real;
-- Execução financeira;
-- Modulação via Stake, Kelly ou Bankroll;
-- Telegram operacional / Alertas por notificação fora de logs;
-- Scheduler operacional para auto-betting;
-- AutoEvolution (módulo segue pendente);
-- Integração de leitura/escrita em Casas de aposta.
+Onda 7 e subsequentes seguem estritamente proibidas de implementar:
+* Recomendação operacional;
+* Execução financeira real ou integração com casas de aposta;
+* Prescrição de Stake, dimensionamento por Kelly Criterion ou cálculo de Bankroll;
+* Alerta acionável ou push para o Telegram;
+* Comando de entrada ou triggers de sistema.
+* Scheduler operacional contínuo ou o antigo engine do AutoEvolution.
 
 ## 13. Dívidas ou bloqueios
 
 ### Críticos
-Nenhum. A arquitetura defensiva da Onda 6 provê terreno seguro. As quebras da verificação de consistência de docs da Onda 6 precisam ser resolvidas para passar no CI sem erro, mas não são bloqueios arquiteturais.
+Nenhum.
 
 ### Médios
-- `api/backtests` continua vazia (herdado da Onda 5). Persistência de backtests formais continua atrasada.
+O acesso a "histórico de falsos positivos e performance recente" para calcular a `calibrated_assertiveness` forçará a resolução da dívida de repositórios ausentes de execuções passadas (o endpoint `/api/backtests` vazio). Será necessário interconectar relatórios passados simulados.
 
 ### Baixos
-- Consistência dos links markdown locais (`file:///` path) identificada pelo validador.
+Nenhum.
 
 ## 14. Primeiro prompt recomendado
 
 ```text
-# Tarefa: Implementar STORY-07-001 — Controle de cota de tokens
+# Tarefa: Implementar STORY-07-001 — Contrato do Green/Red Classifier
 
 ## Objetivo
-Criar mecanismo SQLite para gerenciar uso mensal de tokens, protegendo a cota do Free Tier.
+Atualizar o SafeAIValidationResult e os contratos DTO do Gemini para suportar as flags de simulação binária do classificador.
 
 ## Instruções
-1. Atualizar o script de schema no `schema.py` para criar a tabela `gemini_token_usage` (mês_ano, tokens_input, tokens_output, total).
-2. Criar um repositório `token_budget.py` com o método `check_budget_available()` (limite hardcoded de 1.600.000).
-3. Criar o método `record_usage(input_tokens, output_tokens)`.
-4. Garantir que não existam queries soltas (usar padrão repositório + contexto).
-5. Escrever testes unitários em `test_token_budget.py`.
+1. Em `src/edgehunter/core/gemini_validator.py`, adicionar a classe/Enum `SimulationLabel` com valores apenas `GREEN_SIM` e `RED_SIM`.
+2. Adicionar as propriedades: `simulation_label: SimulationLabel`, `calibrated_assertiveness: float`, `learning_mode: bool = True`, `display: bool = True`.
+3. Manter inalteradas as propriedades estritas (`actionable: bool = False`, `is_simulated: bool = True`, etc).
+4. Ajustar as regras de instanciacão para forçar que `GREEN_SIM` ocorra unicamente se `calibrated_assertiveness >= 0.7`.
+5. Modificar e expandir o `test_gemini_validator_contract.py` para provar que a falta da label binária e as lógicas `>= 70%` funcionam sob coerção.
 ```
 
 ## 15. Etapas restantes estimadas
 
-A Onda 7 é projetada para ser entregue em **5 stories** concisas.
+5 stories estimadas, substituindo as histórias de infraestrutura de rede por histórias de enriquecimento de base analítica.
 
 ## 16. Decisão para Rafael
 
@@ -123,4 +118,4 @@ A Onda 7 é projetada para ser entregue em **5 stories** concisas.
 * [ ] Pode iniciar com ressalvas.
 * [ ] Não deve iniciar ainda.
 
-**Justificativa**: A infraestrutura defensiva construída nas Ondas 5 (API Segura) e 6 (Validador Offline via Fake) garante que o sistema está blindado contra comportamentos maliciosos e conselhos operacionais da IA. O terreno está tecnicamente e contratualmente seguro para adicionarmos o risco de rede (Opção D). A integração é focada 100% em resiliência local (retries e fallbacks) e orçamentação financeira (proteção ao Free Tier), e não alterará uma vírgula sequer das proibições de aposta real.
+**Justificativa**: A mudança do foco da integração real com Gemini para o "Simulated Green/Red Classifier" é madura e altamente alinhada com o modelo paper-trading e non-actionable do projeto. A nova onda alavanca a lógica estatística do sistema com dados simulados e transforma as predições em objetos de aprendizado, blindando a fundação do EdgeHunter de responsabilidades financeiras operacionais.

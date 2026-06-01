@@ -49,6 +49,7 @@ def _metrics(**overrides: object) -> BacktestMetrics:
         "hit_rate": 0.5,
         "false_positive_rate": 0.5,
         "coverage_rate": 0.2,
+        "opportunities_per_analyzed_match": 0.2,
         "average_expected_value": 0.12,
         "average_edge_percentage": 12.0,
         "by_source": {"pinnacle_benchmark": {"opportunities": 2, "hits": 1}},
@@ -100,6 +101,7 @@ def test_creates_valid_backtest_metrics() -> None:
     assert metrics.hit_rate == pytest.approx(0.5)
     assert metrics.false_positive_rate == pytest.approx(0.5)
     assert metrics.coverage_rate == pytest.approx(0.2)
+    assert metrics.opportunities_per_analyzed_match == pytest.approx(0.2)
     assert metrics.average_expected_value == pytest.approx(0.12)
     assert metrics.average_edge_percentage == pytest.approx(12.0)
     assert metrics.by_source == {"pinnacle_benchmark": {"opportunities": 2, "hits": 1}}
@@ -169,6 +171,7 @@ def test_run_to_dict_preserves_safety_flags() -> None:
         (_metrics, "hit_rate"),
         (_metrics, "false_positive_rate"),
         (_metrics, "coverage_rate"),
+        (_metrics, "opportunities_per_analyzed_match"),
         (_metrics, "average_expected_value"),
         (_metrics, "average_edge_percentage"),
     ),

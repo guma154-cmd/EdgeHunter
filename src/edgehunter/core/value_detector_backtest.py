@@ -257,6 +257,7 @@ class BacktestMetrics:
     hit_rate: float
     false_positive_rate: float
     coverage_rate: float
+    opportunities_per_analyzed_match: float
     average_expected_value: float
     average_edge_percentage: float
     by_source: Mapping[str, Mapping[str, int | float]] = field(default_factory=dict)
@@ -288,8 +289,7 @@ class BacktestMetrics:
                 "total_false_positives",
             ),
         )
-        if self.total_opportunities > self.total_analyzed:
-            raise ValueError("total_opportunities must be <= total_analyzed")
+
         if self.total_hits > self.total_opportunities:
             raise ValueError("total_hits must be <= total_opportunities")
         if self.total_false_positives > self.total_opportunities:
@@ -310,6 +310,14 @@ class BacktestMetrics:
             self,
             "coverage_rate",
             _require_probability(self.coverage_rate, "coverage_rate"),
+        )
+        clean_opp_per_match = _require_finite_float(self.opportunities_per_analyzed_match, "opportunities_per_analyzed_match")
+        if clean_opp_per_match < 0.0:
+            raise ValueError("opportunities_per_analyzed_match must be >= 0")
+        object.__setattr__(
+            self,
+            "opportunities_per_analyzed_match",
+            clean_opp_per_match,
         )
         object.__setattr__(
             self,
@@ -350,6 +358,7 @@ class BacktestMetrics:
             "hit_rate": self.hit_rate,
             "false_positive_rate": self.false_positive_rate,
             "coverage_rate": self.coverage_rate,
+            "opportunities_per_analyzed_match": self.opportunities_per_analyzed_match,
             "average_expected_value": self.average_expected_value,
             "average_edge_percentage": self.average_edge_percentage,
             "by_source": {
@@ -599,10 +608,10 @@ def calculate_backtest_metrics(
 
     for selection in selection_tuple:
         _validate_selection_for_metrics(selection)
+        if not selection.match_id:
+            raise ValueError("selection must have a match_id for backtest traceability")
 
     total_opportunities = len(selection_tuple)
-    if total_opportunities > total_analyzed_clean:
-        raise ValueError("total_opportunities must be <= total_analyzed")
 
     summary = _selection_summary(selection_tuple)
 
@@ -614,6 +623,11 @@ def calculate_backtest_metrics(
         hit_rate=float(summary["hit_rate"]),
         false_positive_rate=float(summary["false_positive_rate"]),
         coverage_rate=(
+            len({s.match_id for s in selection_tuple}) / total_analyzed_clean
+            if total_analyzed_clean
+            else 0.0
+        ),
+        opportunities_per_analyzed_match=(
             total_opportunities / total_analyzed_clean
             if total_analyzed_clean
             else 0.0
@@ -741,7 +755,8 @@ def _format_markdown_report(payload: Mapping[str, Any]) -> str:
             f"- Total de falsos positivos: {metrics['total_false_positives']}",
             f"- Taxa de acerto: {metrics['hit_rate']}",
             f"- Taxa de falso positivo: {metrics['false_positive_rate']}",
-            f"- Cobertura: {metrics['coverage_rate']}",
+            f"- Taxa de cobertura (cobertura/partida): {metrics['coverage_rate']}",
+            f"- Oportunidades por partida: {metrics['opportunities_per_analyzed_match']}",
             f"- EV medio: {metrics['average_expected_value']}",
             f"- Edge medio: {metrics['average_edge_percentage']}",
             "",

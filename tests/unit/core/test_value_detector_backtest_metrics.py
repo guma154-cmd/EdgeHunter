@@ -254,15 +254,16 @@ def test_total_analyzed_below_zero_fails() -> None:
         calculate_backtest_metrics([], total_analyzed=-1)
 
 
-def test_more_opportunities_than_analyzed_fails() -> None:
-    with pytest.raises(ValueError, match="total_opportunities must be <= total_analyzed"):
-        calculate_backtest_metrics(
-            [
-                _selection(match_id="match-001"),
-                _selection(match_id="match-002"),
-            ],
-            total_analyzed=1,
-        )
+def test_more_opportunities_than_analyzed_does_not_fail() -> None:
+    metrics = calculate_backtest_metrics(
+        [
+            _selection(match_id="match-001", selection="home_win"),
+            _selection(match_id="match-001", selection="away_win"),
+        ],
+        total_analyzed=1,
+    )
+    assert metrics.opportunities_per_analyzed_match == 2.0
+    assert metrics.coverage_rate == 1.0
 
 
 def test_selection_cannot_be_hit_and_false_positive_at_same_time() -> None:

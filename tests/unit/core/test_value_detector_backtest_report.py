@@ -48,6 +48,7 @@ def _metrics() -> BacktestMetrics:
         hit_rate=0.5,
         false_positive_rate=0.5,
         coverage_rate=2 / 3,
+        opportunities_per_analyzed_match=2 / 3,
         average_expected_value=0.15,
         average_edge_percentage=15.0,
         by_source={
@@ -118,6 +119,7 @@ def test_generates_valid_markdown_report() -> None:
     assert "# Relatorio local de paper trading" in report
     assert "Run ID: run-001" in report
     assert "Total analisado: 3" in report
+    assert "Taxa de cobertura (cobertura/partida):" in report or "Oportunidades por partida:" in report
     assert "pinnacle_benchmark" in report
 
 
@@ -142,6 +144,7 @@ def test_report_includes_main_metrics() -> None:
     assert metrics["hit_rate"] == pytest.approx(0.5)
     assert metrics["false_positive_rate"] == pytest.approx(0.5)
     assert metrics["coverage_rate"] == pytest.approx(2 / 3)
+    assert metrics["opportunities_per_analyzed_match"] == pytest.approx(2 / 3)
     assert metrics["average_expected_value"] == pytest.approx(0.15)
     assert metrics["average_edge_percentage"] == pytest.approx(15.0)
 

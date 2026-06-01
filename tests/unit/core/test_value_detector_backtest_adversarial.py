@@ -348,12 +348,13 @@ def test_metrics_rejects_hit_and_false_positive_together() -> None:
         )
 
 
-def test_metrics_rejects_more_opportunities_than_analyzed() -> None:
-    with pytest.raises(ValueError, match="total_opportunities must be <= total_analyzed"):
-        calculate_backtest_metrics(
-            [_selection(), _selection(match_id="match-002")],
-            total_analyzed=1,
-        )
+def test_metrics_accepts_more_opportunities_than_analyzed_if_same_match() -> None:
+    metrics = calculate_backtest_metrics(
+        [_selection(match_id="match-001", selection="home_win"), _selection(match_id="match-001", selection="away_win")],
+        total_analyzed=1,
+    )
+    assert metrics.opportunities_per_analyzed_match == 2.0
+    assert metrics.coverage_rate == 1.0
 
 
 def test_groupings_handle_multiple_sources_methods_deterministically() -> None:

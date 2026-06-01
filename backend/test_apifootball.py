@@ -1,3 +1,5 @@
+import pytest
+pytest.importorskip("flask")
 import os
 from dotenv import load_dotenv
 load_dotenv()

@@ -1,3 +1,5 @@
+import pytest
+pytest.importorskip("playwright")
 import asyncio
 from playwright.async_api import async_playwright
 

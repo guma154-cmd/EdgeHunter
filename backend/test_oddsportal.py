@@ -1,3 +1,5 @@
+import pytest
+pytest.importorskip("flask")
 import asyncio
 import logging
 import sys

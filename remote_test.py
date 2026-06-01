@@ -1,9 +1,13 @@
 
+import pytest
+pytest.importorskip("flask")
+
 import asyncio
 import sys, os
 
-sys.path.insert(0, '/app')
-os.chdir('/app')
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+os.chdir(current_dir)
 
 from app.data.direct_scrapers import scrape_pinnacle_tennis
 

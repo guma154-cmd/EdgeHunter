@@ -134,6 +134,10 @@ def _normalize_summary_mapping(
             )
             if metric_value < 0:
                 raise ValueError(f"{field_name}.{key}.{metric_name} must be >= 0")
+            if metric_name.endswith("_rate") and metric_value > 1:
+                raise ValueError(
+                    f"{field_name}.{key}.{metric_name} must be between 0 and 1",
+                )
             metric_payload[metric_name] = (
                 int(raw_metric_value)
                 if isinstance(raw_metric_value, int)
@@ -280,6 +284,18 @@ class BacktestMetrics:
                 "total_false_positives",
             ),
         )
+        if self.total_opportunities > self.total_analyzed:
+            raise ValueError("total_opportunities must be <= total_analyzed")
+        if self.total_hits > self.total_opportunities:
+            raise ValueError("total_hits must be <= total_opportunities")
+        if self.total_false_positives > self.total_opportunities:
+            raise ValueError(
+                "total_false_positives must be <= total_opportunities",
+            )
+        if self.total_hits + self.total_false_positives > self.total_opportunities:
+            raise ValueError(
+                "total_hits and total_false_positives must not exceed total_opportunities",
+            )
         object.__setattr__(self, "hit_rate", _require_probability(self.hit_rate, "hit_rate"))
         object.__setattr__(
             self,
@@ -416,17 +432,7 @@ def _build_run_id(mode: str, started_at: datetime) -> str:
 
 
 def _empty_metrics(total_analyzed: int = 0) -> BacktestMetrics:
-    return BacktestMetrics(
-        total_analyzed=total_analyzed,
-        total_opportunities=0,
-        total_hits=0,
-        total_false_positives=0,
-        hit_rate=0.0,
-        false_positive_rate=0.0,
-        coverage_rate=0.0,
-        average_expected_value=0.0,
-        average_edge_percentage=0.0,
-    )
+    return calculate_backtest_metrics([], total_analyzed=total_analyzed)
 
 
 def _historical_match_to_snapshot(historical_match: Any) -> dict[str, Any]:
@@ -511,56 +517,110 @@ def _opportunity_to_selection_result(
     )
 
 
-def _group_selection_results(
-    selections: tuple[BacktestSelectionResult, ...],
-    field_name: str,
-) -> dict[str, dict[str, int]]:
-    grouped: dict[str, dict[str, int]] = {}
-    for selection in selections:
-        key = getattr(selection, field_name)
-        metrics = grouped.setdefault(
-            key,
-            {
-                "opportunities": 0,
-                "hits": 0,
-                "false_positives": 0,
-            },
-        )
-        metrics["opportunities"] += 1
-        metrics["hits"] += int(selection.is_hit)
-        metrics["false_positives"] += int(selection.is_false_positive)
-    return dict(sorted(grouped.items()))
+def _validate_selection_for_metrics(selection: BacktestSelectionResult) -> None:
+    if selection.is_hit and selection.is_false_positive:
+        raise ValueError("selection cannot be both hit and false positive")
+    _require_finite_float(selection.expected_value, "expected_value")
+    _require_finite_float(selection.edge_percentage, "edge_percentage")
 
 
-def _build_metrics(
-    *,
-    total_analyzed: int,
+def _selection_summary(
     selections: tuple[BacktestSelectionResult, ...],
-) -> BacktestMetrics:
+) -> dict[str, int | float]:
     total_opportunities = len(selections)
     if total_opportunities == 0:
-        return _empty_metrics(total_analyzed=total_analyzed)
+        return {
+            "total_opportunities": 0,
+            "total_hits": 0,
+            "total_false_positives": 0,
+            "hit_rate": 0.0,
+            "false_positive_rate": 0.0,
+            "average_expected_value": 0.0,
+            "average_edge_percentage": 0.0,
+            "opportunities": 0,
+            "hits": 0,
+            "false_positives": 0,
+        }
 
     total_hits = sum(int(selection.is_hit) for selection in selections)
     total_false_positives = sum(
         int(selection.is_false_positive)
         for selection in selections
     )
-    expected_value_total = sum(selection.expected_value for selection in selections)
-    edge_total = sum(selection.edge_percentage for selection in selections)
+    average_expected_value = (
+        sum(selection.expected_value for selection in selections)
+        / total_opportunities
+    )
+    average_edge_percentage = (
+        sum(selection.edge_percentage for selection in selections)
+        / total_opportunities
+    )
+
+    return {
+        "total_opportunities": total_opportunities,
+        "total_hits": total_hits,
+        "total_false_positives": total_false_positives,
+        "hit_rate": total_hits / total_opportunities,
+        "false_positive_rate": total_false_positives / total_opportunities,
+        "average_expected_value": average_expected_value,
+        "average_edge_percentage": average_edge_percentage,
+        "opportunities": total_opportunities,
+        "hits": total_hits,
+        "false_positives": total_false_positives,
+    }
+
+
+def _group_selection_metrics(
+    selections: tuple[BacktestSelectionResult, ...],
+    field_name: str,
+) -> dict[str, dict[str, int | float]]:
+    grouped: dict[str, list[BacktestSelectionResult]] = {}
+    for selection in selections:
+        key = getattr(selection, field_name)
+        grouped.setdefault(key, []).append(selection)
+    return {
+        key: _selection_summary(tuple(values))
+        for key, values in sorted(grouped.items())
+    }
+
+
+def calculate_backtest_metrics(
+    selections: list[BacktestSelectionResult] | tuple[BacktestSelectionResult, ...],
+    total_analyzed: int,
+) -> BacktestMetrics:
+    total_analyzed_clean = _require_non_negative_int(total_analyzed, "total_analyzed")
+    selection_tuple = tuple(selections)
+    if not all(isinstance(selection, BacktestSelectionResult) for selection in selection_tuple):
+        raise ValueError("selections must contain BacktestSelectionResult values")
+
+    for selection in selection_tuple:
+        _validate_selection_for_metrics(selection)
+
+    total_opportunities = len(selection_tuple)
+    if total_opportunities > total_analyzed_clean:
+        raise ValueError("total_opportunities must be <= total_analyzed")
+
+    summary = _selection_summary(selection_tuple)
 
     return BacktestMetrics(
-        total_analyzed=total_analyzed,
-        total_opportunities=total_opportunities,
-        total_hits=total_hits,
-        total_false_positives=total_false_positives,
-        hit_rate=total_hits / total_opportunities,
-        false_positive_rate=total_false_positives / total_opportunities,
-        coverage_rate=total_opportunities / total_analyzed if total_analyzed else 0.0,
-        average_expected_value=expected_value_total / total_opportunities,
-        average_edge_percentage=edge_total / total_opportunities,
-        by_source=_group_selection_results(selections, "source"),
-        by_detection_method=_group_selection_results(selections, "detection_method"),
+        total_analyzed=total_analyzed_clean,
+        total_opportunities=int(summary["total_opportunities"]),
+        total_hits=int(summary["total_hits"]),
+        total_false_positives=int(summary["total_false_positives"]),
+        hit_rate=float(summary["hit_rate"]),
+        false_positive_rate=float(summary["false_positive_rate"]),
+        coverage_rate=(
+            total_opportunities / total_analyzed_clean
+            if total_analyzed_clean
+            else 0.0
+        ),
+        average_expected_value=float(summary["average_expected_value"]),
+        average_edge_percentage=float(summary["average_edge_percentage"]),
+        by_source=_group_selection_metrics(selection_tuple, "source"),
+        by_detection_method=_group_selection_metrics(
+            selection_tuple,
+            "detection_method",
+        ),
     )
 
 
@@ -614,9 +674,9 @@ def run_value_detector_backtest(
         run_id=_build_run_id(mode_clean, started_at),
         started_at=started_at,
         finished_at=finished_at,
-        metrics=_build_metrics(
+        metrics=calculate_backtest_metrics(
+            selection_tuple,
             total_analyzed=len(historical_matches),
-            selections=selection_tuple,
         ),
         selections=selection_tuple,
         warnings=(),

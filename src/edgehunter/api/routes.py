@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from src.edgehunter.api.contracts import build_safe_api_response
 from src.edgehunter.api.security import get_api_key
 from src.edgehunter.core.gemini_validator_persistence import list_ai_validation_reports
+from src.edgehunter.core.simulated_signal_classifier_persistence import list_simulated_signal_classifications
 
 router = APIRouter()
 
@@ -221,6 +222,35 @@ def get_gemini_validations(
             provider=provider,
             model_name=model_name,
             technical_verdict=technical_verdict,
+        )
+        return build_safe_api_response(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/api/simulated-signal-classifications",
+    dependencies=[Depends(get_api_key)],
+    tags=["simulated-signal-classifications"],
+)
+def get_simulated_signal_classifications(
+    limit: int = Query(50, gt=0),
+    offset: int = Query(0, ge=0),
+    simulation_label: Optional[str] = None,
+    opportunity_id: Optional[str] = None,
+    signal_id: Optional[str] = None,
+):
+    try:
+        db_path = get_db_path()
+        result = list_simulated_signal_classifications(
+            db_path=db_path,
+            limit=limit,
+            offset=offset,
+            simulation_label=simulation_label,
+            opportunity_id=opportunity_id,
+            signal_id=signal_id,
         )
         return build_safe_api_response(result)
     except ValueError as e:

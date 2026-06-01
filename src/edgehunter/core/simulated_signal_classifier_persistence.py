@@ -115,10 +115,12 @@ def list_simulated_signal_classifications(
     simulation_label: str | None = None,
     opportunity_id: str | None = None,
     signal_id: str | None = None,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Retrieve simulated classifications with filtering and pagination."""
     if not isinstance(limit, int) or limit < 1:
         limit = 50
+    if limit > 100:
+        limit = 100
     if not isinstance(offset, int) or offset < 0:
         offset = 0
 
@@ -140,10 +142,26 @@ def list_simulated_signal_classifications(
     sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
+    count_sql = "SELECT COUNT(*) FROM simulated_signal_classifications WHERE 1=1"
+    count_params: list[Any] = []
+    
+    if simulation_label is not None:
+        count_sql += " AND simulation_label = ?"
+        count_params.append(simulation_label)
+    if opportunity_id is not None:
+        count_sql += " AND opportunity_id = ?"
+        count_params.append(opportunity_id)
+    if signal_id is not None:
+        count_sql += " AND signal_id = ?"
+        count_params.append(signal_id)
+
     connection = _get_connection(db_path)
     try:
         cursor = connection.execute(sql, params)
         rows = cursor.fetchall()
+        
+        cursor_count = connection.execute(count_sql, count_params)
+        total_count = cursor_count.fetchone()[0]
         
         results = []
         for row in rows:
@@ -160,7 +178,30 @@ def list_simulated_signal_classifications(
                 d["risk_factors"] = json.loads(d["risk_factors_json"])
             except Exception:
                 d["risk_factors"] = []
+                
+            for k in ["stake", "kelly", "kelly_criterion", "bankroll", "bet_amount", "wager", "suggested_bet", "recommended_bet"]:
+                if k in d:
+                    raise RuntimeError(f"Database contains forbidden financial field: {k}")
+                    
+            if d.get("actionable") or d.get("bet_placed") or d.get("alerted"):
+                raise RuntimeError("Database contains unsafe operational flags. Security corruption detected.")
+                
             results.append(d)
-        return results
+            
+        return {
+            "data": results,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "count": len(results),
+                "total": total_count,
+                "has_more": offset + len(results) < total_count
+            },
+            "filters": {
+                "simulation_label": simulation_label,
+                "opportunity_id": opportunity_id,
+                "signal_id": signal_id,
+            }
+        }
     finally:
         connection.close()

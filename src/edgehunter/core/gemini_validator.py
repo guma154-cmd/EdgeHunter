@@ -16,6 +16,8 @@ MIN_OFFERED_ODDS = 1.01
 MAX_RISK_FACTORS = 5
 MAX_RISK_FACTOR_LENGTH = 120
 MAX_RATIONALE_LENGTH = 280
+FAKE_GEMINI_VALIDATION_PROVIDER = "fake"
+FAKE_GEMINI_VALIDATION_MODEL = "fake-gemini-validator-v1"
 
 
 def _join(*parts: str) -> str:
@@ -384,8 +386,8 @@ class SafeAIValidationResult:
     risk_factors: tuple[str, ...] | list[str]
     rationale: str
     parser_status: ParserStatus | str
-    provider: str = "fake"
-    model_name: str = "fake-gemini-validator-v1"
+    provider: str = FAKE_GEMINI_VALIDATION_PROVIDER
+    model_name: str = FAKE_GEMINI_VALIDATION_MODEL
     prompt_hash: str = ""
     tokens_used: int = 0
     is_simulated: bool = True
@@ -563,6 +565,33 @@ def build_gemini_validation_prompt(
     )
 
 
+def _prompt_digest(prompt: str) -> str:
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
+class FakeGeminiValidationClient:
+    provider = FAKE_GEMINI_VALIDATION_PROVIDER
+    model_name = FAKE_GEMINI_VALIDATION_MODEL
+
+    def validate(self, prompt: str) -> str:
+        clean_prompt = _require_text(prompt, "prompt")
+        digest = _prompt_digest(clean_prompt)
+        verdicts = (
+            TechnicalVerdict.PASS.value,
+            TechnicalVerdict.REVIEW.value,
+            TechnicalVerdict.REJECT.value,
+        )
+        verdict = verdicts[int(digest[:2], 16) % len(verdicts)]
+        confidence = 0.55 + ((int(digest[2:4], 16) % 20) / 100)
+        payload = {
+            "technical_verdict": verdict,
+            "confidence": round(confidence, 2),
+            "risk_factors": ["local_consistency_review"],
+            "rationale": "Offline deterministic technical assessment.",
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 def _validation_id(
     *,
     opportunity_id: str,
@@ -699,8 +728,8 @@ def parse_gemini_validation_response(
     raw_response: str,
     *,
     opportunity_id: str,
-    provider: str = "fake",
-    model_name: str = "fake-gemini-validator-v1",
+    provider: str = FAKE_GEMINI_VALIDATION_PROVIDER,
+    model_name: str = FAKE_GEMINI_VALIDATION_MODEL,
     prompt_hash: str,
 ) -> SafeAIValidationResult:
     opportunity_id_clean = _require_text(opportunity_id, "opportunity_id")
@@ -736,3 +765,39 @@ def parse_gemini_validation_response(
         )
     except ValueError:
         return fallback
+
+
+def validate_opportunity_offline(
+    validation_input: SafeAIValidationInput,
+    client: FakeGeminiValidationClient | None = None,
+) -> SafeAIValidationResult:
+    if not isinstance(validation_input, SafeAIValidationInput):
+        raise ValueError("validation_input must be a SafeAIValidationInput")
+
+    prompt = build_gemini_validation_prompt(validation_input)
+    prompt_hash = _prompt_digest(prompt)
+    validation_client = FakeGeminiValidationClient() if client is None else client
+    validate = getattr(validation_client, "validate", None)
+
+    fallback = _safe_failed_result(
+        opportunity_id=validation_input.opportunity_id,
+        provider=FAKE_GEMINI_VALIDATION_PROVIDER,
+        model_name=FAKE_GEMINI_VALIDATION_MODEL,
+        prompt_hash=prompt_hash,
+        raw_response="",
+    )
+    if not callable(validate):
+        return fallback
+
+    try:
+        raw_response = validate(prompt)
+    except Exception:
+        return fallback
+
+    return parse_gemini_validation_response(
+        raw_response,
+        opportunity_id=validation_input.opportunity_id,
+        provider=FAKE_GEMINI_VALIDATION_PROVIDER,
+        model_name=FAKE_GEMINI_VALIDATION_MODEL,
+        prompt_hash=prompt_hash,
+    )

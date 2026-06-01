@@ -130,7 +130,7 @@ def test_runs_backtest_in_consensus_mode() -> None:
 
     assert len(result.selections) == 1
     assert result.selections[0].source == "consensus"
-    assert result.selections[0].expected_value == pytest.approx(0.10)
+    assert result.selections[0].expected_value == pytest.approx(8 / 17 * 2.2 - 1)
 
 
 def test_unknown_mode_fails_clearly() -> None:
@@ -264,10 +264,10 @@ def test_basic_metrics_are_filled() -> None:
     assert result.metrics.hit_rate == pytest.approx(0.5)
     assert result.metrics.false_positive_rate == pytest.approx(0.5)
     assert result.metrics.coverage_rate == pytest.approx(1.0)
-    assert result.metrics.average_expected_value == pytest.approx(0.1)
-    assert result.metrics.average_edge_percentage == pytest.approx(10.0)
+    assert result.metrics.average_expected_value == pytest.approx(8 / 17 * 2.2 - 1)
+    assert result.metrics.average_edge_percentage == pytest.approx((8 / 17 * 2.2 - 1) * 100.0)
     assert result.metrics.by_source["pinnacle_benchmark"]["opportunities"] == 2
-    assert result.metrics.by_detection_method["pinnacle_ev_v1"]["hits"] == 1
+    assert result.metrics.by_detection_method["pinnacle_ev_v2"]["hits"] == 1
 
 
 def test_no_opportunities_records_insufficient_data_reason() -> None:

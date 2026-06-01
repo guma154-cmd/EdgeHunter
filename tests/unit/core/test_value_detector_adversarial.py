@@ -208,15 +208,15 @@ def test_pinnacle_missing_or_malformed_inputs_are_safe() -> None:
 def test_pinnacle_handles_missing_selection_and_absurd_target_odds() -> None:
     snapshot = _snapshot(
         odds={
-            "pinnacle": {"home": 2.0, "draw": 3.2},
+            "pinnacle": {"home": 2.0, "draw": 3.2, "away": 4.0},
             "bet365": {"home": 100.0, "draw": 3.1, "away": 100.0},
         },
     )
 
     opportunities = detect_value_vs_pinnacle(snapshot, "bet365", min_ev=0.0)
 
-    assert [opportunity.selection for opportunity in opportunities] == ["home_win"]
-    assert opportunities[0].expected_value == pytest.approx(49.0)
+    assert [opportunity.selection for opportunity in opportunities] == ["home_win", "away_win"]
+    assert opportunities[0].expected_value == pytest.approx(8 / 17 * 100.0 - 1)
     assert opportunities[0].actionable is False
 
 
@@ -288,8 +288,8 @@ def test_consensus_uses_lower_ev_when_sources_agree() -> None:
     )[0]
 
     assert opportunity.selection == "home_win"
-    assert opportunity.expected_value == pytest.approx(0.10)
-    assert opportunity.edge_percentage == pytest.approx(10.0)
+    assert opportunity.expected_value == pytest.approx(8 / 17 * 2.2 - 1)
+    assert opportunity.edge_percentage == pytest.approx((8 / 17 * 2.2 - 1) * 100.0)
     assert opportunity.source == "consensus"
     assert opportunity.actionable is False
 

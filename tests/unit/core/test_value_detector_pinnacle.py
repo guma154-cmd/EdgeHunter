@@ -47,12 +47,16 @@ def test_detects_simulated_opportunities_when_target_odds_create_positive_ev() -
     )
 
     assert [item.selection for item in opportunities] == ["home_win", "away_win"]
-    assert opportunities[0].true_probability == pytest.approx(0.5)
+    # v2: probabilities are overround-normalized
+    # Pinnacle: home=2.00, draw=3.20, away=4.00
+    # raw: 0.5, 0.3125, 0.25  |  overround=1.0625
+    # norm_home=0.5/1.0625≈0.47059, norm_away=0.25/1.0625≈0.23529
+    assert opportunities[0].true_probability == pytest.approx(8 / 17)  # 0.47058...
     assert opportunities[0].offered_odds == pytest.approx(2.2)
-    assert opportunities[0].expected_value == pytest.approx(0.1)
-    assert opportunities[1].true_probability == pytest.approx(0.25)
+    assert opportunities[0].expected_value == pytest.approx(8 / 17 * 2.2 - 1)
+    assert opportunities[1].true_probability == pytest.approx(4 / 17)  # 0.23529...
     assert opportunities[1].offered_odds == pytest.approx(4.5)
-    assert opportunities[1].expected_value == pytest.approx(0.125)
+    assert opportunities[1].expected_value == pytest.approx(4 / 17 * 4.5 - 1)
 
 
 def test_does_not_detect_when_ev_is_below_minimum_threshold() -> None:
@@ -145,7 +149,7 @@ def test_source_and_detection_method_identify_simulated_pinnacle_benchmark() -> 
     opportunity = detect_value_vs_pinnacle(_snapshot(), target_bookmaker="bet365")[0]
 
     assert opportunity.source == "pinnacle_benchmark"
-    assert opportunity.detection_method == "pinnacle_ev_v1"
+    assert opportunity.detection_method == "pinnacle_ev_v2"
 
 
 def test_opportunity_id_is_deterministic() -> None:

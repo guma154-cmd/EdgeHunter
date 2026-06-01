@@ -14,7 +14,7 @@ from typing import Any
 MIN_OFFERED_ODDS = 1.01
 PROBABILITY_SUM_TOLERANCE = 1e-6
 PINNACLE_SOURCE = "pinnacle_benchmark"
-PINNACLE_DETECTION_METHOD = "pinnacle_ev_v1"
+PINNACLE_DETECTION_METHOD = "pinnacle_ev_v2"
 POISSON_SOURCE = "poisson_model"
 POISSON_DETECTION_METHOD = "poisson_ev_v1"
 CONSENSUS_SOURCE = "consensus"
@@ -97,6 +97,45 @@ def _snapshot_odds(snapshot: dict[str, Any], bookmaker: str) -> dict[str, Any] |
     return bookmaker_odds
 
 
+ODDS_KEYS_1X2 = ("home", "draw", "away")
+
+
+def calculate_normalized_implied_probabilities(
+    odds: dict[str, float],
+) -> dict[str, float]:
+    """Remove Pinnacle overround and return normalized implied probabilities for 1X2.
+
+    Formula (proportional margin removal):
+        raw_prob   = 1 / odd              for each of home, draw, away
+        overround  = sum(raw_probs)
+        norm_prob  = raw_prob / overround for each selection
+
+    The returned probabilities sum to approximately 1.0.
+
+    Args:
+        odds: dict with keys 'home', 'draw', 'away' mapping to Pinnacle decimal odds.
+
+    Returns:
+        dict with keys 'home', 'draw', 'away' mapping to normalized probabilities.
+
+    Raises:
+        ValueError: if any key is missing, any odd is invalid (<1.01, NaN, inf),
+                    or if the overround is not finite / <= 0.
+    """
+    raw: dict[str, float] = {}
+    for key in ODDS_KEYS_1X2:
+        if key not in odds:
+            raise ValueError(f"odds missing required key: '{key}'")
+        odd = _normalize_offered_odds(float(odds[key]))
+        raw[key] = 1.0 / odd
+
+    overround = sum(raw.values())
+    if not math.isfinite(overround) or overround <= 0.0:
+        raise ValueError(f"overround must be finite and positive, got {overround}")
+
+    return {key: raw[key] / overround for key in ODDS_KEYS_1X2}
+
+
 def build_simulated_opportunity_id(
     *,
     match_id: str,
@@ -157,14 +196,20 @@ def detect_value_vs_pinnacle(
     if pinnacle_odds is None or target_odds is None:
         return []
 
+    # v2: remove Pinnacle overround before computing true probabilities.
+    # Requires all three keys (home, draw, away) present and valid in pinnacle_odds;
+    # raises ValueError for missing keys, invalid odds (< 1.01, NaN, inf).
+    normalized_probs = calculate_normalized_implied_probabilities(
+        {k: pinnacle_odds[k] for k in ODDS_KEYS_1X2 if k in pinnacle_odds}
+    )
+
     opportunities: list[SimulatedValueOpportunity] = []
     for odds_key, selection in SELECTION_BY_ODDS_KEY.items():
-        if odds_key not in pinnacle_odds or odds_key not in target_odds:
+        if odds_key not in normalized_probs or odds_key not in target_odds:
             continue
 
-        pinnacle_odd = _normalize_offered_odds(pinnacle_odds[odds_key])
+        true_probability = normalized_probs[odds_key]
         offered_odd = _normalize_offered_odds(target_odds[odds_key])
-        true_probability = 1.0 / pinnacle_odd
         expected_value = calculate_ev(true_probability, offered_odd)
         if expected_value < clean_min_ev:
             continue

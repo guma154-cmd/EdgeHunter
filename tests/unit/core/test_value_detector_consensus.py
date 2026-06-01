@@ -138,8 +138,9 @@ def test_preserves_security_flags() -> None:
 def test_uses_conservative_minimum_ev_and_edge() -> None:
     opportunity = detect_value_consensus(_snapshot(), FakeModel(), "bet365")[0]
 
-    assert opportunity.expected_value == pytest.approx(0.10)
-    assert opportunity.edge_percentage == pytest.approx(10.0)
+    # v2: pinnacle home EV is ~0.03529, poisson is ~0.32 -> pinnacle is conservative
+    assert opportunity.expected_value == pytest.approx(8 / 17 * 2.2 - 1)
+    assert opportunity.edge_percentage == pytest.approx((8 / 17 * 2.2 - 1) * 100.0)
 
 
 def test_opportunity_id_is_deterministic() -> None:

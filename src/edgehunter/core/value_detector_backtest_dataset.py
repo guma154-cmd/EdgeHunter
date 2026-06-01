@@ -162,6 +162,9 @@ class BacktestHistoricalMatch:
         )
         if self.actual_result not in RESULT_VALUES:
             raise ValueError("actual_result must be one of home_win, draw, away_win")
+        computed_result = _compute_actual_result(self.home_goals, self.away_goals)
+        if self.actual_result != computed_result:
+            raise ValueError("actual_result does not match scoreline")
         object.__setattr__(
             self,
             "snapshot_id",

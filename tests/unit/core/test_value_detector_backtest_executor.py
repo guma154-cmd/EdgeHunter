@@ -163,7 +163,13 @@ def test_detected_opportunity_with_correct_result_is_hit() -> None:
 
 def test_detected_opportunity_with_wrong_result_is_false_positive() -> None:
     result = run_value_detector_backtest(
-        [_historical_match(actual_result="away_win")],
+        [
+            _historical_match(
+                home_goals=0,
+                away_goals=1,
+                actual_result="away_win",
+            ),
+        ],
         mode="pinnacle",
     )
 
@@ -174,17 +180,19 @@ def test_detected_opportunity_with_wrong_result_is_false_positive() -> None:
 
 
 @pytest.mark.parametrize(
-    ("selection", "actual_result"),
+    ("selection", "actual_result", "home_goals", "away_goals"),
     (
-        ("home", "home_win"),
-        ("draw", "draw"),
-        ("away", "away_win"),
+        ("home", "home_win", 2, 1),
+        ("draw", "draw", 1, 1),
+        ("away", "away_win", 0, 1),
     ),
 )
 def test_selection_alias_maps_to_actual_result(
     monkeypatch: pytest.MonkeyPatch,
     selection: str,
     actual_result: str,
+    home_goals: int,
+    away_goals: int,
 ) -> None:
     monkeypatch.setattr(
         backtest_module,
@@ -193,7 +201,13 @@ def test_selection_alias_maps_to_actual_result(
     )
 
     result = run_value_detector_backtest(
-        [_historical_match(actual_result=actual_result)],
+        [
+            _historical_match(
+                home_goals=home_goals,
+                away_goals=away_goals,
+                actual_result=actual_result,
+            ),
+        ],
         mode="pinnacle",
     )
 
@@ -233,7 +247,12 @@ def test_basic_metrics_are_filled() -> None:
     result = run_value_detector_backtest(
         [
             _historical_match(match_id="match-001", actual_result="home_win"),
-            _historical_match(match_id="match-002", actual_result="away_win"),
+            _historical_match(
+                match_id="match-002",
+                home_goals=0,
+                away_goals=1,
+                actual_result="away_win",
+            ),
         ],
         mode="pinnacle",
     )

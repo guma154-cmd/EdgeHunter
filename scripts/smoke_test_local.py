@@ -55,7 +55,7 @@ def run_local_smoke_test() -> dict:
         failed = True
         
     # 4. HTML Dashboard
-    res_html = client.get("/dashboard")
+    res_html = client.get("/dashboard", headers=headers)
     if res_html.status_code == 200:
         results.append({"endpoint": "/dashboard", "passed": True, "details": "HTTP 200 (HTML)"})
     else:

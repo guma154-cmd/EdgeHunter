@@ -2,6 +2,7 @@ import sqlite3
 import os
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import HTMLResponse
 from src.edgehunter.api.contracts import build_safe_api_response
 from src.edgehunter.api.security import get_api_key
 from src.edgehunter.core.dashboard_periodic_reports import generate_periodic_agent_evolution_report
@@ -403,3 +404,76 @@ def get_dashboard_evolution_report(
     except (RuntimeError, sqlite3.Error) as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from src.edgehunter.core.dashboard_renderer import render_dashboard_visual_page, render_dashboard_html
+
+@router.get(
+    "/api/dashboard/visual",
+    dependencies=[Depends(get_api_key)],
+    tags=["dashboard"],
+)
+def get_dashboard_visual():
+    try:
+        classifications, outcomes = _read_dashboard_inputs(
+            db_path=get_db_path(),
+            limit=50,
+            offset=0,
+        )
+        summary = generate_dashboard_summary(
+            classifications=classifications,
+            outcomes=outcomes,
+            current_threshold=0.70,
+        )
+        calibration_report = generate_simulated_signal_calibration_report(
+            classifications,
+            outcomes,
+            threshold_green=0.70,
+            minimum_viable_sample_size=30,
+        )
+        page = render_dashboard_visual_page(
+            summary=summary,
+            calibration_summary=calibration_report,
+            evolution_report=None,
+            schema_status=None
+        )
+        return build_safe_api_response(page.to_dict())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get(
+    "/dashboard",
+    dependencies=[Depends(get_api_key)],
+    tags=["dashboard"],
+    response_class=HTMLResponse
+)
+def get_dashboard_html():
+    try:
+        classifications, outcomes = _read_dashboard_inputs(
+            db_path=get_db_path(),
+            limit=50,
+            offset=0,
+        )
+        summary = generate_dashboard_summary(
+            classifications=classifications,
+            outcomes=outcomes,
+            current_threshold=0.70,
+        )
+        calibration_report = generate_simulated_signal_calibration_report(
+            classifications,
+            outcomes,
+            threshold_green=0.70,
+            minimum_viable_sample_size=30,
+        )
+        page = render_dashboard_visual_page(
+            summary=summary,
+            calibration_summary=calibration_report,
+            evolution_report=None,
+            schema_status=None
+        )
+        html_content = render_dashboard_html(page)
+        return HTMLResponse(content=html_content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))

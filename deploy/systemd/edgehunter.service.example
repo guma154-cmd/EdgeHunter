@@ -1,0 +1,38 @@
+[Unit]
+Description=EdgeHunter Runtime Controlado
+After=network.target
+
+[Service]
+# Ajuste os caminhos conforme a instalação
+WorkingDirectory=/opt/edgehunter
+ExecStart=/opt/edgehunter/venv/bin/python scripts/run_runtime.py
+
+# Variáveis de ambiente carregadas do arquivo .env
+EnvironmentFile=/opt/edgehunter/.env
+
+# Reiniciar automaticamente em caso de falha
+Restart=on-failure
+RestartSec=10s
+
+# Usuário sem privilégios — NUNCA execute como root
+User=edgehunter
+
+# Logs via journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=edgehunter-runtime
+
+[Install]
+WantedBy=multi-user.target
+
+# ---------------------------------------------------------------------------
+# NOTAS DE SEGURANÇA:
+# 1. Este arquivo é um EXEMPLO. Não ative sem revisar todas as configurações.
+# 2. O .env NÃO deve conter segredos diretamente em produção.
+#    Use variáveis de ambiente do sistema ou um vault.
+# 3. EDGEHUNTER_RUNTIME_DRY_RUN=true por padrão.
+#    Só mude para false após validar o ambiente completamente.
+# 4. GEMINI_ENABLED, SCRAPER_ENABLED, TELEGRAM_ENABLED devem ser
+#    explicitamente habilitados. O padrão é false.
+# 5. Sem execução financeira, stake, Kelly ou AutoEvolution.
+# ---------------------------------------------------------------------------

@@ -20,6 +20,11 @@ def _check_source_ref(source_ref: str) -> None:
 
 
 def _parse_row_dict(row: dict, source_ref: str) -> ObservedResult:
+    forbidden_fields = {"stake", "kelly", "kelly_criterion", "bankroll", "bet_amount", "wager", "suggested_bet", "recommended_bet", "actionable", "bet_placed", "alerted"}
+    for k in row.keys():
+        if k in forbidden_fields:
+            raise ValueError(f"Forbidden field detected: {k}")
+
     # Safely extract and convert string fields
     def get_str(k):
         return str(row.get(k, "")).strip()

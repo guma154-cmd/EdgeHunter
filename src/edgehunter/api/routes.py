@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from src.edgehunter.api.contracts import build_safe_api_response
 from src.edgehunter.api.security import get_api_key
+from src.edgehunter.core.dashboard_periodic_reports import generate_periodic_agent_evolution_report
 from src.edgehunter.core.dashboard_summary import generate_dashboard_summary
 from src.edgehunter.core.gemini_validator_persistence import list_ai_validation_reports
 from src.edgehunter.core.simulated_signal_calibration_report import generate_simulated_signal_calibration_report
@@ -367,6 +368,36 @@ def get_calibration_summary(
                 "threshold_suggestion": threshold_suggestion.to_dict(),
             }
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/api/dashboard/evolution-report",
+    dependencies=[Depends(get_api_key)],
+    tags=["dashboard"],
+)
+def get_dashboard_evolution_report(
+    period: str = Query("daily"),
+    current_period_start: str = Query(...),
+    current_period_end: str = Query(...),
+    previous_period_start: Optional[str] = None,
+    previous_period_end: Optional[str] = None,
+):
+    try:
+        classifications, outcomes = _read_dashboard_inputs(db_path=get_db_path(), limit=100)
+        report = generate_periodic_agent_evolution_report(
+            classifications,
+            outcomes,
+            period=period,
+            current_period_start=current_period_start,
+            current_period_end=current_period_end,
+            previous_period_start=previous_period_start,
+            previous_period_end=previous_period_end,
+        )
+        return build_safe_api_response(report)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except (RuntimeError, sqlite3.Error) as e:

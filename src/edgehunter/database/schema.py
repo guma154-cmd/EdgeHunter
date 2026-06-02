@@ -26,6 +26,7 @@ EXPECTED_TABLES: tuple[str, ...] = (
     "simulated_signal_classifications",
     "simulated_signal_outcomes",
     "schema_version",
+    "schema_migrations",
 )
 
 EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -167,6 +168,20 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
         "applied_at",
         "description",
     ),
+    "schema_migrations": (
+        "id",
+        "migration_id",
+        "version",
+        "name",
+        "checksum",
+        "status",
+        "applied_at",
+        "execution_mode",
+        "details_json",
+        "is_simulated",
+        "actionable",
+        "not_operational_advice",
+    ),
 }
 
 EXPECTED_INDEXES: tuple[str, ...] = (
@@ -184,6 +199,7 @@ EXPECTED_INDEXES: tuple[str, ...] = (
     "idx_simulated_signal_classifications_signal",
     "idx_simulated_signal_outcomes_opportunity",
     "idx_simulated_signal_outcomes_signal",
+    "idx_schema_migrations_migration_id",
 )
 
 SCHEMA_SQL = """
@@ -367,6 +383,24 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     description TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    migration_id TEXT NOT NULL UNIQUE,
+    version INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    status TEXT NOT NULL,
+    applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    execution_mode TEXT NOT NULL,
+    details_json TEXT NOT NULL,
+    is_simulated INTEGER NOT NULL DEFAULT 1,
+    actionable INTEGER NOT NULL DEFAULT 0,
+    not_operational_advice INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_schema_migrations_migration_id
+    ON schema_migrations(migration_id);
 
 INSERT OR IGNORE INTO schema_version (version, description)
 VALUES (1, 'Initial PRD-01 OddsHistorian schema');

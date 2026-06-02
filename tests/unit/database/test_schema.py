@@ -115,8 +115,9 @@ class TestPragmaProfile:
 
 
 class TestFailureScenarios:
-    def test_invalid_path_returns_false_without_crashing(self) -> None:
-        assert ensure_schema("Z:\\path\\that\\does\\not\\exist\\edgehunter.db") is False
+    def test_invalid_path_returns_false_without_crashing(self, tmp_path: Path) -> None:
+        invalid_path = tmp_path / ("A" * 500) / "edgehunter.db"
+        assert ensure_schema(str(invalid_path)) is False
 
     def test_unwritable_directory_returns_false(self, tmp_path: Path) -> None:
         locked_dir = tmp_path / "locked"

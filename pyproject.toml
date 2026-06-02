@@ -9,7 +9,9 @@ description = "EdgeHunter Platform"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi",
-    "uvicorn"
+    "uvicorn",
+    "python-dateutil",
+    "pytz"
 ]
 
 [project.optional-dependencies]

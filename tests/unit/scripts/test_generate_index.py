@@ -27,9 +27,10 @@ def test_parse_index_config_reads_sections(tmp_path: Path) -> None:
 
     sections = generate_index.parse_index_config(config)
 
+    import os
     assert [section.name for section in sections] == ["prds", "adrs"]
-    assert str(sections[0].output).endswith("docs\\_index\\PRDS_INDEX.md")
-    assert str(sections[1].sources[0]).endswith("docs\\architecture\\example.md")
+    assert str(sections[0].output).endswith(os.path.normpath("docs/_index/PRDS_INDEX.md"))
+    assert str(sections[1].sources[0]).endswith(os.path.normpath("docs/architecture/example.md"))
 
 
 def test_extract_document_summary_handles_prd_format(tmp_path: Path) -> None:

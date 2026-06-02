@@ -69,10 +69,11 @@ def render_dashboard_visual_page(
         
     # Schema Health
     if schema_status:
+        sev = VisualSeverity.SUCCESS if schema_status.get("is_valid") else VisualSeverity.WARNING
         cards.append(DashboardVisualCard(
             title="Schema Health",
             content=str(schema_status),
-            severity=VisualSeverity.INFO
+            severity=sev
         ))
         
     # Evolution Report

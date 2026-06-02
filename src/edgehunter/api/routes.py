@@ -405,6 +405,7 @@ def get_dashboard_evolution_report(
         raise HTTPException(status_code=500, detail=str(e))
 
 from src.edgehunter.core.dashboard_renderer import render_dashboard_visual_page, render_dashboard_html
+from src.edgehunter.database.migrations_validator import validate_database_migrations
 
 @router.get(
     "/api/dashboard/visual",
@@ -429,11 +430,12 @@ def get_dashboard_visual():
             threshold_green=0.70,
             minimum_viable_sample_size=30,
         )
+        schema_val = validate_database_migrations(get_db_path())
         page = render_dashboard_visual_page(
             summary=summary,
             calibration_summary=calibration_report,
             evolution_report=None,
-            schema_status=None
+            schema_status=schema_val
         )
         return build_safe_api_response(page.to_dict())
     except ValueError as e:
@@ -465,11 +467,12 @@ def get_dashboard_html():
             threshold_green=0.70,
             minimum_viable_sample_size=30,
         )
+        schema_val = validate_database_migrations(get_db_path())
         page = render_dashboard_visual_page(
             summary=summary,
             calibration_summary=calibration_report,
             evolution_report=None,
-            schema_status=None
+            schema_status=schema_val
         )
         html_content = render_dashboard_html(page)
         return HTMLResponse(content=html_content)

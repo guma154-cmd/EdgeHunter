@@ -128,7 +128,7 @@ def send_telegram_message(
     import json as _json
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    body = _json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
+    body = _json.dumps({"chat_id": chat_id, "text": text}).encode()
 
     try:
         req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")

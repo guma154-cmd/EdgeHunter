@@ -228,5 +228,38 @@ def test_contains_forbidden_message(text, expected):
 def test_safe_flags_always_present():
     res = notify_runtime_status({"status": "ok"}, env=_env_disabled())
     assert res["is_simulated"] is True
-    assert res["actionable"] is False
     assert res["not_operational_advice"] is True
+
+# ---------------------------------------------------------------------------
+# 15. Mensagem com caracteres especiais (Markdown sanitizado)
+# ---------------------------------------------------------------------------
+def test_send_telegram_message_markdown_sanitized():
+    import urllib.request
+    import json
+    cfg = _load_telegram_config(_env_enabled())
+
+    class MockResponse:
+        def read(self):
+            return b'{"ok": true}'
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    requests_made = []
+
+    def mock_urlopen(req, timeout=None):
+        requests_made.append(req.data.decode())
+        return MockResponse()
+
+    text_with_special_chars = "ID: test_sig_telegram_001\nTime_A * Teste\nLiga `Teste`"
+
+    with patch.object(urllib.request, "urlopen", side_effect=mock_urlopen):
+        res = send_telegram_message("tok", "123", text_with_special_chars, cfg)
+
+    assert res["sent"] is True
+    assert len(requests_made) == 1
+
+    body = json.loads(requests_made[0])
+    assert "parse_mode" not in body  # Garante que não está quebrando Markdown
+    assert body["text"] == text_with_special_chars

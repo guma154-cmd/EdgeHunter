@@ -1,7 +1,7 @@
 import os
 import shutil
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 
 def is_safe_path(base_dir: str, target_path: str) -> bool:
     """Evita path traversal assegurando que target_path resolve para dentro de base_dir."""
@@ -15,14 +15,14 @@ def create_local_backup(db_path: str, backup_dir: str, mock_timestamp: str | Non
 
     os.makedirs(backup_dir, exist_ok=True)
     
-    # Path traversal block
-    if not is_safe_path(backup_dir, backup_dir):
-        raise ValueError("Invalid backup directory path.")
-
-    timestamp = mock_timestamp or datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = mock_timestamp or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     db_name = os.path.basename(db_path)
     backup_filename = f"{db_name}.{timestamp}.bak"
     backup_path = os.path.join(backup_dir, backup_filename)
+
+    # Path traversal block
+    if not is_safe_path(backup_dir, backup_path):
+        raise ValueError("Invalid backup directory path.")
 
     shutil.copy2(db_path, backup_path)
 

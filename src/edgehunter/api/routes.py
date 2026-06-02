@@ -557,3 +557,26 @@ def get_migrations_journal(limit: int = Query(50, gt=0), offset: int = Query(0, 
         return build_safe_api_response(result)
     except (RuntimeError, sqlite3.Error) as e:
         raise HTTPException(status_code=500, detail=str(e))
+from src.edgehunter.core.dashboard_advanced_calibration import generate_advanced_calibration_dashboard
+
+@router.get('/api/dashboard/advanced-calibration', dependencies=[Depends(get_api_key)], tags=['dashboard', 'calibration'])
+def get_advanced_calibration_dashboard(
+    limit: int = Query(200, gt=0),
+):
+    try:
+        classifications, outcomes = _read_dashboard_inputs(
+            db_path=get_db_path(),
+            limit=limit,
+            offset=0,
+        )
+        report = generate_advanced_calibration_dashboard(
+            current_metrics=classifications,
+            current_outcomes=outcomes,
+            min_sample_size=10,
+            current_threshold=0.70
+        )
+        return build_safe_api_response(report)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -480,3 +480,67 @@ def get_dashboard_html():
         raise HTTPException(status_code=400, detail=str(e))
     except (RuntimeError, sqlite3.Error) as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+from src.edgehunter.database.migration_planner import plan_database_migrations
+from src.edgehunter.database.migration_journal import list_applied_migrations
+from src.edgehunter.database.migrations import validate_migration_registry
+from src.edgehunter.database.migration_models import MigrationExecutionMode
+
+@router.get("/api/migrations/status", dependencies=[Depends(get_api_key)], tags=["migrations"])
+def get_migrations_status():
+    try:
+        db_path = get_db_path()
+        registry_status = validate_migration_registry()
+        plan = plan_database_migrations(db_path, execution_mode=MigrationExecutionMode.DRY_RUN)
+
+        pending = [i for i in plan.items if i.status.value != "APPLIED"]
+
+        result = {
+            "registry_valid": registry_status["passed"],
+            "latest_version": registry_status.get("latest", ""),
+            "total_defined": registry_status.get("count", 0),
+            "up_to_date": len(pending) == 0,
+            "pending_count": len(pending),
+            "is_simulated": True,
+            "actionable": False,
+            "not_operational_advice": True
+        }
+        return build_safe_api_response(result)
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api/migrations/plan", dependencies=[Depends(get_api_key)], tags=["migrations"])
+def get_migrations_plan():
+    try:
+        db_path = get_db_path()
+        plan = plan_database_migrations(db_path, execution_mode=MigrationExecutionMode.DRY_RUN)
+
+        result = {
+            "execution_mode": plan.execution_mode.value,
+            "is_simulated": plan.is_simulated,
+            "actionable": plan.actionable,
+            "not_operational_advice": plan.not_operational_advice,
+            "items": [item.to_dict() for item in plan.items]
+        }
+        return build_safe_api_response(result)
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api/migrations/journal", dependencies=[Depends(get_api_key)], tags=["migrations"])
+def get_migrations_journal(limit: int = Query(50, gt=0), offset: int = Query(0, ge=0)):
+    try:
+        db_path = get_db_path()
+        try:
+            journal = list_applied_migrations(db_path, limit=limit, offset=offset)
+        except sqlite3.Error:
+            journal = []
+
+        result = {
+            "data": journal,
+            "is_simulated": True,
+            "actionable": False,
+            "not_operational_advice": True
+        }
+        return build_safe_api_response(result)
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))

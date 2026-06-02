@@ -52,8 +52,12 @@ def generate_advanced_threshold_suggestion(
         if trend == TrendStatus.DECLINING:
             declining_count += 1
             
-        key = m.get("segment_key", {})
-        label = key.get("simulation_label", "").upper()
+        key = m.get("segment_key")
+        label = ""
+        if hasattr(key, "simulation_label"):
+            label = key.simulation_label.upper()
+        elif isinstance(key, dict):
+            label = key.get("simulation_label", "").upper()
         
         if "GREEN" in label:
             green_false_positives += m.get("false_positive_rate", 0.0)

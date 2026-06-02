@@ -3,7 +3,7 @@
 > ⚠️ ARQUIVO AUTO-GERADO - NAO EDITAR MANUALMENTE
 > Gerado por: python scripts/generate_index.py
 > Fonte primaria: ver docs/prd/*.md e docs/architecture/*.md
-> Ultima geracao: 2026-06-02 09:47 UTC
+> Ultima geracao: 2026-06-02 10:03 UTC
 
 Total de documentos: 6
 

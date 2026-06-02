@@ -1,0 +1,146 @@
+"""
+Orquestrador 24/7 controlado.
+
+Habilitado apenas via EDGEHUNTER_RUNTIME_ENABLED=true no .env.
+DRY_RUN=true por padrão — nenhuma ação externa ocorre sem flag explícita.
+Sem execução financeira, sem autoaplicação de threshold, sem AutoEvolution.
+"""
+import os
+import logging
+import time
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+def _load_runtime_config(env: Optional[dict] = None) -> dict:
+    e = env or {}
+    raw_max = e.get("EDGEHUNTER_RUNTIME_MAX_CYCLES") or os.environ.get("EDGEHUNTER_RUNTIME_MAX_CYCLES", "")
+    return {
+        "enabled": (e.get("EDGEHUNTER_RUNTIME_ENABLED") or os.environ.get("EDGEHUNTER_RUNTIME_ENABLED", "false")).lower() == "true",
+        "interval_seconds": int(e.get("EDGEHUNTER_RUNTIME_INTERVAL_SECONDS") or os.environ.get("EDGEHUNTER_RUNTIME_INTERVAL_SECONDS", "300")),
+        "max_cycles": int(raw_max) if raw_max else None,
+        "dry_run": (e.get("EDGEHUNTER_RUNTIME_DRY_RUN") or os.environ.get("EDGEHUNTER_RUNTIME_DRY_RUN", "true")).lower() == "true",
+    }
+
+
+def _run_scraper_step(env: dict, cycle_log: dict) -> dict:
+    """Executa passo de scraping com tratamento de erro isolado."""
+    try:
+        from src.edgehunter.integrations.scraper_client import run_scraper_once
+        result = run_scraper_once(env=env)
+        cycle_log["scraper_status"] = result.get("status", "EMPTY")
+        return result
+    except Exception as e:
+        logger.warning(f"Scraper step failed: {e}")
+        cycle_log["scraper_status"] = f"ERROR:{type(e).__name__}"
+        return {"status": "ERROR", "items": [], "actionable": False}
+
+
+def _run_gemini_step(prompt: str, env: dict, cycle_log: dict) -> dict:
+    """Executa passo Gemini com fallback isolado."""
+    try:
+        from src.edgehunter.integrations.gemini_client import validate_with_gemini
+        result = validate_with_gemini(prompt, env=env)
+        cycle_log["gemini_status"] = "OK" if result.get("valid") else result.get("fallback_reason", "FALLBACK")
+        return result
+    except Exception as e:
+        logger.warning(f"Gemini step failed: {e}")
+        cycle_log["gemini_status"] = f"ERROR:{type(e).__name__}"
+        return {"valid": False, "parsed": {"label": "UNRESOLVED"}, "actionable": False}
+
+
+def _run_telegram_step(status_data: dict, env: dict, cycle_log: dict, _mock_send=None) -> None:
+    """Envia notificação Telegram com erro isolado."""
+    try:
+        from src.edgehunter.integrations.telegram_notifier import notify_runtime_status
+        result = notify_runtime_status(status_data, env=env, _mock_send=_mock_send)
+        cycle_log["telegram_status"] = "SENT" if result.get("sent") else result.get("error", "NOT_SENT")
+    except Exception as e:
+        logger.warning(f"Telegram step failed: {e}")
+        cycle_log["telegram_status"] = f"ERROR:{type(e).__name__}"
+
+
+def run_one_cycle(env: Optional[dict] = None, _mock_send=None) -> dict:
+    """
+    Executa um único ciclo do runtime.
+    Nunca executa ação financeira.
+    Nunca autoaplica threshold.
+    """
+    config = _load_runtime_config(env)
+    cycle_log = {
+        "dry_run": config["dry_run"],
+        "scraper_status": "SKIPPED",
+        "gemini_status": "SKIPPED",
+        "telegram_status": "SKIPPED",
+        "actionable": False,
+        "not_operational_advice": True,
+        "is_simulated": True,
+    }
+
+    if config["dry_run"]:
+        cycle_log["note"] = "dry_run=true — nenhuma ação externa executada"
+        logger.info("Cycle: DRY_RUN mode — skipping all external steps")
+        return cycle_log
+
+    # 1. Scraper
+    scraper_result = _run_scraper_step(env or {}, cycle_log)
+
+    # 2. Gemini (com prompt técnico genérico)
+    gemini_result = _run_gemini_step("analise tecnica de dados locais", env or {}, cycle_log)
+
+    # 3. Telegram
+    status_data = {
+        "cycle": "active",
+        "scraper": cycle_log["scraper_status"],
+        "gemini": cycle_log["gemini_status"],
+        "label": gemini_result.get("parsed", {}).get("label", "UNRESOLVED"),
+    }
+    _run_telegram_step(status_data, env or {}, cycle_log, _mock_send=_mock_send)
+
+    logger.info(f"Cycle completed: {cycle_log}")
+    return cycle_log
+
+
+def run_runtime(env: Optional[dict] = None, _mock_send=None) -> dict:
+    """
+    Loop principal do runtime.
+    Encerra após max_cycles se configurado.
+    Sem loop infinito em testes (use max_cycles).
+    """
+    config = _load_runtime_config(env)
+
+    summary = {
+        "enabled": config["enabled"],
+        "cycles_executed": 0,
+        "cycles": [],
+        "shutdown_reason": None,
+        "actionable": False,
+        "not_operational_advice": True,
+        "is_simulated": True,
+    }
+
+    if not config["enabled"]:
+        summary["shutdown_reason"] = "runtime_disabled"
+        return summary
+
+    cycle_count = 0
+    try:
+        while True:
+            cycle_log = run_one_cycle(env=env, _mock_send=_mock_send)
+            summary["cycles"].append(cycle_log)
+            cycle_count += 1
+            summary["cycles_executed"] = cycle_count
+
+            if config["max_cycles"] is not None and cycle_count >= config["max_cycles"]:
+                summary["shutdown_reason"] = f"max_cycles_reached:{config['max_cycles']}"
+                break
+
+            if config["interval_seconds"] > 0 and config["max_cycles"] != 1:
+                time.sleep(config["interval_seconds"])
+
+    except KeyboardInterrupt:
+        summary["shutdown_reason"] = "keyboard_interrupt"
+        logger.info("Runtime: clean shutdown via KeyboardInterrupt")
+
+    return summary

@@ -45,6 +45,43 @@ def build_telegram_message(event_type: str, data: dict) -> str:
     Constrói mensagem técnica para Telegram.
     Bloqueia linguagem proibida.
     """
+    # Sanitiza valores primeiro
+    safe_data = {}
+    for key, val in data.items():
+        val_str = str(val)
+        if _contains_forbidden_message(val_str):
+            safe_data[key] = "[BLOCKED]"
+        else:
+            safe_data[key] = val_str
+
+    if event_type == "signal_summary":
+        label = safe_data.get("label", "")
+        if "GREEN_SIM" in label:
+            title = "🟢 GREEN"
+        elif "RED_SIM" in label:
+            title = "🔴 RED"
+        else:
+            title = None
+            
+        if title:
+            lines = [title, ""]
+            lines.append(f"Jogo: {safe_data.get('home', 'N/A')} x {safe_data.get('away', 'N/A')}")
+            lines.append("Mercado: Resultado Final")
+            if "GREEN" in title:
+                lines.append(f"Hipótese: {safe_data.get('selection', 'N/A')}")
+            else:
+                lines.append(f"Hipótese rejeitada: {safe_data.get('selection', 'N/A')}")
+            lines.append(f"Assertividade: {safe_data.get('calibrated_assertiveness', 'N/A')}%")
+            lines.append(f"Confiança: {safe_data.get('reliability_level', 'N/A')}")
+            lines.append(f"Tendência: {safe_data.get('trend_status', 'N/A')}")
+            lines.append(f"Odd: {safe_data.get('offered_odds', 'N/A')}")
+            lines.append(f"EV sim.: {safe_data.get('expected_value', 'N/A')}%")
+            lines.append(f"Fonte: {safe_data.get('source', 'N/A')}")
+            lines.append(f"ID: {safe_data.get('signal_id', 'N/A')}")
+            lines.append("")
+            lines.append("Status: paper trading / não operacional")
+            return "\n".join(lines)
+
     allowed_events = {
         "runtime_status": "📊 Runtime Status",
         "signal_summary": "📈 Resumo Técnico",
@@ -58,11 +95,7 @@ def build_telegram_message(event_type: str, data: dict) -> str:
     header = allowed_events.get(event_type, f"📌 {event_type}")
     lines = [header]
 
-    for key, val in data.items():
-        # Bloquear campos com valor proibido
-        val_str = str(val)
-        if _contains_forbidden_message(val_str):
-            val_str = "[BLOCKED]"
+    for key, val_str in safe_data.items():
         lines.append(f"  {key}: {val_str}")
 
     return "\n".join(lines)

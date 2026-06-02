@@ -166,12 +166,33 @@ def test_build_message_blocks_forbidden_data_values():
 def test_build_message_allows_technical_labels():
     msg = build_telegram_message("signal_summary", {
         "label": "GREEN_SIM",
-        "confidence": "0.72",
-        "status": "VALIDATED",
+        "home": "Time A",
+        "away": "Time B",
+        "selection": "Empate",
+        "calibrated_assertiveness": "65.5",
+        "reliability_level": "Média",
+        "trend_status": "Neutro",
+        "offered_odds": "3.10",
+        "expected_value": "5.0",
+        "source": "Scraper",
+        "signal_id": "1234",
     })
-    assert "GREEN_SIM" in msg
-    assert "VALIDATED" in msg
+    assert "🟢 GREEN" in msg
+    assert "Time A x Time B" in msg
+    assert "Hipótese: Empate" in msg
+    assert "Status: paper trading / não operacional" in msg
+    assert "GREEN_SIM" not in msg  # Apenas 🟢 GREEN aparece no texto
     assert "[BLOCKED]" not in msg
+
+
+def test_build_message_red_sim_template():
+    msg = build_telegram_message("signal_summary", {
+        "label": "RED_SIM",
+        "selection": "Visitante",
+    })
+    assert "🔴 RED" in msg
+    assert "Hipótese rejeitada: Visitante" in msg
+    assert "Status: paper trading / não operacional" in msg
 
 
 # ---------------------------------------------------------------------------

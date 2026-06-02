@@ -205,6 +205,19 @@ def get_backtests(
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from src.edgehunter.core.reconciliation_report import generate_reconciliation_report
+
+@router.get("/api/reconciliation/report", dependencies=[Depends(get_api_key)], tags=["reconciliation"])
+def get_reconciliation_report():
+    try:
+        db_path = get_db_path()
+        result = generate_reconciliation_report(db_path)
+        return build_safe_api_response(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get(
     "/api/gemini-validations",

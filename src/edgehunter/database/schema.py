@@ -24,6 +24,7 @@ EXPECTED_TABLES: tuple[str, ...] = (
     "value_detections",
     "gemini_validation_reports",
     "simulated_signal_classifications",
+    "simulated_signal_outcomes",
     "schema_version",
 )
 
@@ -142,6 +143,25 @@ EXPECTED_COLUMNS: dict[str, tuple[str, ...]] = {
         "created_at",
         "inserted_at",
     ),
+    "simulated_signal_outcomes": (
+        "id",
+        "outcome_id",
+        "signal_id",
+        "classification_id",
+        "opportunity_id",
+        "outcome_status",
+        "observed_at",
+        "source",
+        "notes",
+        "is_simulated",
+        "paper_trading",
+        "learning_mode",
+        "actionable",
+        "bet_placed",
+        "alerted",
+        "not_operational_advice",
+        "inserted_at",
+    ),
     "schema_version": (
         "version",
         "applied_at",
@@ -162,6 +182,8 @@ EXPECTED_INDEXES: tuple[str, ...] = (
     "idx_gemini_validation_reports_created",
     "idx_simulated_signal_classifications_opportunity",
     "idx_simulated_signal_classifications_signal",
+    "idx_simulated_signal_outcomes_opportunity",
+    "idx_simulated_signal_outcomes_signal",
 )
 
 SCHEMA_SQL = """
@@ -314,6 +336,31 @@ CREATE INDEX IF NOT EXISTS idx_simulated_signal_classifications_opportunity
     ON simulated_signal_classifications(opportunity_id);
 CREATE INDEX IF NOT EXISTS idx_simulated_signal_classifications_signal
     ON simulated_signal_classifications(signal_id);
+
+CREATE TABLE IF NOT EXISTS simulated_signal_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    outcome_id TEXT NOT NULL UNIQUE,
+    signal_id TEXT NOT NULL,
+    classification_id TEXT NOT NULL,
+    opportunity_id TEXT NOT NULL,
+    outcome_status TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    source TEXT NOT NULL,
+    notes TEXT NOT NULL,
+    is_simulated INTEGER NOT NULL DEFAULT 1,
+    paper_trading INTEGER NOT NULL DEFAULT 1,
+    learning_mode INTEGER NOT NULL DEFAULT 1,
+    actionable INTEGER NOT NULL DEFAULT 0,
+    bet_placed INTEGER NOT NULL DEFAULT 0,
+    alerted INTEGER NOT NULL DEFAULT 0,
+    not_operational_advice INTEGER NOT NULL DEFAULT 1,
+    inserted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_simulated_signal_outcomes_opportunity
+    ON simulated_signal_outcomes(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_simulated_signal_outcomes_signal
+    ON simulated_signal_outcomes(signal_id);
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,

@@ -29,6 +29,7 @@ def build_safe_api_response(payload: dict, *, message: str | None = None) -> dic
     response = {
         "is_simulated": True,
         "paper_trading": True,
+        "learning_mode": True,
         "actionable": False,
         "bet_placed": False,
         "alerted": False,

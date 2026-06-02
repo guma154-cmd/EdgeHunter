@@ -4,9 +4,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException
 from src.edgehunter.api.contracts import build_safe_api_response
 from src.edgehunter.api.security import get_api_key
+from src.edgehunter.core.dashboard_summary import generate_dashboard_summary
 from src.edgehunter.core.gemini_validator_persistence import list_ai_validation_reports
+from src.edgehunter.core.simulated_signal_calibration_report import generate_simulated_signal_calibration_report
 from src.edgehunter.core.simulated_signal_classifier_persistence import list_simulated_signal_classifications
 from src.edgehunter.core.simulated_signal_outcome_persistence import list_simulated_signal_outcomes
+from src.edgehunter.core.simulated_threshold_suggestion import generate_threshold_suggestion
 
 router = APIRouter()
 
@@ -284,6 +287,86 @@ def get_simulated_signal_outcomes(
             opportunity_id=opportunity_id,
         )
         return build_safe_api_response(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _read_dashboard_inputs(
+    db_path: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], list[dict]]:
+    classifications = list_simulated_signal_classifications(
+        db_path=db_path,
+        limit=limit,
+        offset=offset,
+    )["data"]
+    outcomes = list_simulated_signal_outcomes(
+        db_path=db_path,
+        limit=limit,
+        offset=offset,
+    )["data"]
+    return classifications, outcomes
+
+
+@router.get(
+    "/api/dashboard/summary",
+    dependencies=[Depends(get_api_key)],
+    tags=["dashboard"],
+)
+def get_dashboard_summary(
+    limit: int = Query(50, gt=0),
+    offset: int = Query(0, ge=0),
+):
+    try:
+        classifications, outcomes = _read_dashboard_inputs(
+            db_path=get_db_path(),
+            limit=limit,
+            offset=offset,
+        )
+        result = generate_dashboard_summary(
+            classifications=classifications,
+            outcomes=outcomes,
+            current_threshold=0.70,
+        )
+        return build_safe_api_response(result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except (RuntimeError, sqlite3.Error) as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/api/calibration/summary",
+    dependencies=[Depends(get_api_key)],
+    tags=["dashboard"],
+)
+def get_calibration_summary(
+    threshold_green: float = Query(0.70, ge=0.0, le=1.0),
+    minimum_sample_size: int = Query(30, gt=0),
+):
+    try:
+        classifications, outcomes = _read_dashboard_inputs(db_path=get_db_path())
+        calibration_report = generate_simulated_signal_calibration_report(
+            classifications,
+            outcomes,
+            threshold_green=threshold_green,
+            minimum_viable_sample_size=minimum_sample_size,
+        )
+        threshold_suggestion = generate_threshold_suggestion(
+            calibration_report,
+            current_threshold=threshold_green,
+            minimum_sample_size=minimum_sample_size,
+        )
+        return build_safe_api_response(
+            {
+                "calibration_report": calibration_report,
+                "threshold_suggestion": threshold_suggestion.to_dict(),
+            }
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except (RuntimeError, sqlite3.Error) as e:

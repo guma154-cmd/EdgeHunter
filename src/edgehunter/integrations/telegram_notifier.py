@@ -54,33 +54,41 @@ def build_telegram_message(event_type: str, data: dict) -> str:
         else:
             safe_data[key] = val_str
 
-    if event_type == "signal_summary":
+    if event_type == "signal_pending":
+        lines = ["🟡 PENDENTE", ""]
+        lines.append(f"Jogo: {safe_data.get('home', 'N/A')} x {safe_data.get('away', 'N/A')}")
+        lines.append("Mercado: Resultado Final")
+        lines.append(f"Hipótese: {safe_data.get('selection', 'N/A')}")
+        lines.append(f"Assertividade: {safe_data.get('calibrated_assertiveness', 'N/A')}%")
+        lines.append(f"Odd: {safe_data.get('offered_odds', 'N/A')}")
+        lines.append(f"Fonte: {safe_data.get('source', 'N/A')}")
+        lines.append(f"ID: {safe_data.get('signal_id', 'N/A')}")
+        lines.append("")
+        lines.append("Status: aguardando resultado final / paper trading")
+        return "\n".join(lines)
+
+    if event_type == "signal_resolved":
         label = safe_data.get("label", "")
-        if "GREEN_SIM" in label:
+        if label == "GREEN":
             title = "🟢 GREEN"
-        elif "RED_SIM" in label:
+            status_line = "Status: hipótese confirmada / paper trading"
+        elif label == "RED":
             title = "🔴 RED"
+            status_line = "Status: hipótese não confirmada / paper trading"
         else:
-            title = None
-            
-        if title:
-            lines = [title, ""]
-            lines.append(f"Jogo: {safe_data.get('home', 'N/A')} x {safe_data.get('away', 'N/A')}")
-            lines.append("Mercado: Resultado Final")
-            if "GREEN" in title:
-                lines.append(f"Hipótese: {safe_data.get('selection', 'N/A')}")
-            else:
-                lines.append(f"Hipótese rejeitada: {safe_data.get('selection', 'N/A')}")
-            lines.append(f"Assertividade: {safe_data.get('calibrated_assertiveness', 'N/A')}%")
-            lines.append(f"Confiança: {safe_data.get('reliability_level', 'N/A')}")
-            lines.append(f"Tendência: {safe_data.get('trend_status', 'N/A')}")
-            lines.append(f"Odd: {safe_data.get('offered_odds', 'N/A')}")
-            lines.append(f"EV sim.: {safe_data.get('expected_value', 'N/A')}%")
-            lines.append(f"Fonte: {safe_data.get('source', 'N/A')}")
-            lines.append(f"ID: {safe_data.get('signal_id', 'N/A')}")
-            lines.append("")
-            lines.append("Status: paper trading / não operacional")
-            return "\n".join(lines)
+            return ""
+
+        lines = [title, ""]
+        lines.append(f"Jogo: {safe_data.get('home', 'N/A')} x {safe_data.get('away', 'N/A')}")
+        lines.append("Mercado: Resultado Final")
+        lines.append(f"Hipótese: {safe_data.get('selection', 'N/A')}")
+        lines.append(f"Resultado final: {safe_data.get('home_score', 'N/A')} x {safe_data.get('away_score', 'N/A')}")
+        lines.append(f"Odd: {safe_data.get('offered_odds', 'N/A')}")
+        lines.append(f"Assertividade inicial: {safe_data.get('calibrated_assertiveness', 'N/A')}%")
+        lines.append(f"ID: {safe_data.get('signal_id', 'N/A')}")
+        lines.append("")
+        lines.append(status_line)
+        return "\n".join(lines)
 
     allowed_events = {
         "runtime_status": "📊 Runtime Status",
@@ -160,8 +168,8 @@ def notify_runtime_status(status_data: dict, env: Optional[dict] = None, _mock_s
     return send_telegram_message(config["bot_token"], config["chat_id"], text, config, _mock_send=_mock_send)
 
 
-def notify_signal_summary(summary_data: dict, env: Optional[dict] = None, _mock_send: Optional[callable] = None) -> dict:
-    """Notifica resumo técnico de sinais (GREEN_SIM/RED_SIM como labels técnicos)."""
+def notify_signal_pending(signal_data: dict, env: Optional[dict] = None, _mock_send: Optional[callable] = None) -> dict:
+    """Notifica a captura de um sinal pendente no Telegram."""
     config = _load_telegram_config(env)
     if not config["enabled"]:
         return {**_SAFE_RESULT_TEMPLATE, "error": "telegram_disabled"}
@@ -170,5 +178,22 @@ def notify_signal_summary(summary_data: dict, env: Optional[dict] = None, _mock_
     if not config["chat_id"]:
         return {**_SAFE_RESULT_TEMPLATE, "error": "missing_chat_id"}
 
-    text = build_telegram_message("signal_summary", summary_data)
+    text = build_telegram_message("signal_pending", signal_data)
+    return send_telegram_message(config["bot_token"], config["chat_id"], text, config, _mock_send=_mock_send)
+
+
+def notify_signal_resolved(resolved_data: dict, env: Optional[dict] = None, _mock_send: Optional[callable] = None) -> dict:
+    """Notifica a resolução final de um sinal (GREEN ou RED) no Telegram."""
+    config = _load_telegram_config(env)
+    if not config["enabled"]:
+        return {**_SAFE_RESULT_TEMPLATE, "error": "telegram_disabled"}
+    if not config["bot_token"]:
+        return {**_SAFE_RESULT_TEMPLATE, "error": "missing_bot_token"}
+    if not config["chat_id"]:
+        return {**_SAFE_RESULT_TEMPLATE, "error": "missing_chat_id"}
+
+    text = build_telegram_message("signal_resolved", resolved_data)
+    if not text:
+        return {**_SAFE_RESULT_TEMPLATE, "error": "empty_resolved_message"}
+        
     return send_telegram_message(config["bot_token"], config["chat_id"], text, config, _mock_send=_mock_send)

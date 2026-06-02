@@ -61,7 +61,7 @@ def _run_telegram_step(status_data: dict, env: dict, cycle_log: dict, _mock_send
         cycle_log["telegram_status"] = f"ERROR:{type(e).__name__}"
 
 
-def run_one_cycle(env: Optional[dict] = None, _mock_send=None) -> dict:
+def run_one_cycle(env: Optional[dict] = None, _mock_send=None, notified_set: Optional[set] = None) -> dict:
     """
     Executa um único ciclo do runtime.
     Nunca executa ação financeira.
@@ -78,6 +78,9 @@ def run_one_cycle(env: Optional[dict] = None, _mock_send=None) -> dict:
         "is_simulated": True,
     }
 
+    if notified_set is None:
+        notified_set = set()
+
     if config["dry_run"]:
         cycle_log["note"] = "dry_run=true — nenhuma ação externa executada"
         logger.info("Cycle: DRY_RUN mode — skipping all external steps")
@@ -89,7 +92,7 @@ def run_one_cycle(env: Optional[dict] = None, _mock_send=None) -> dict:
     # 2. Gemini (com prompt técnico genérico)
     gemini_result = _run_gemini_step("analise tecnica de dados locais", env or {}, cycle_log)
 
-    # 3. Telegram
+    # 3. Telegram: Runtime Status
     status_data = {
         "cycle": "active",
         "scraper": cycle_log["scraper_status"],
@@ -97,6 +100,23 @@ def run_one_cycle(env: Optional[dict] = None, _mock_send=None) -> dict:
         "label": gemini_result.get("parsed", {}).get("label", "UNRESOLVED"),
     }
     _run_telegram_step(status_data, env or {}, cycle_log, _mock_send=_mock_send)
+
+    # 4. Notificações de Sinais Pendentes e Resolvidos
+    from src.edgehunter.runtime.result_resolution_notifications import process_and_notify_signals
+    
+    pending_signals = []
+    if gemini_result.get("valid") and gemini_result.get("parsed"):
+        pending_signals.append(gemini_result.get("parsed"))
+        
+    resolved_outcomes = [] # TODO: Conectar com o módulo de extração de resultados (ObservedResult/Outcome Builder) quando estiver pronto
+    
+    process_and_notify_signals(
+        pending_signals=pending_signals,
+        resolved_outcomes=resolved_outcomes,
+        notified_set=notified_set,
+        env=env or {},
+        _mock_send=_mock_send
+    )
 
     logger.info(f"Cycle completed: {cycle_log}")
     return cycle_log
@@ -125,9 +145,10 @@ def run_runtime(env: Optional[dict] = None, _mock_send=None) -> dict:
         return summary
 
     cycle_count = 0
+    notified_set = set()
     try:
         while True:
-            cycle_log = run_one_cycle(env=env, _mock_send=_mock_send)
+            cycle_log = run_one_cycle(env=env, _mock_send=_mock_send, notified_set=notified_set)
             summary["cycles"].append(cycle_log)
             cycle_count += 1
             summary["cycles_executed"] = cycle_count

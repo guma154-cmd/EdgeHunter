@@ -212,7 +212,7 @@ def test_keyboard_interrupt_clean_shutdown():
     cycle_count = 0
     original_run_one = run_one_cycle
 
-    def mock_cycle(env=None, _mock_send=None):
+    def mock_cycle(env=None, _mock_send=None, notified_set=None):
         nonlocal cycle_count
         cycle_count += 1
         if cycle_count >= 2:

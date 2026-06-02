@@ -7,7 +7,8 @@ from unittest.mock import patch, MagicMock
 
 from src.edgehunter.integrations.telegram_notifier import (
     notify_runtime_status,
-    notify_signal_summary,
+    notify_signal_pending,
+    notify_signal_resolved,
     build_telegram_message,
     send_telegram_message,
     _contains_forbidden_message,
@@ -160,47 +161,57 @@ def test_build_message_blocks_forbidden_data_values():
     assert "stake" not in msg.lower().replace("[blocked]", "")
 
 
-# ---------------------------------------------------------------------------
-# 11. build_telegram_message inclui label técnico sem bloqueio
-# ---------------------------------------------------------------------------
-def test_build_message_allows_technical_labels():
-    msg = build_telegram_message("signal_summary", {
-        "label": "GREEN_SIM",
+def test_build_message_allows_technical_labels_pending():
+    msg = build_telegram_message("signal_pending", {
         "home": "Time A",
         "away": "Time B",
         "selection": "Empate",
         "calibrated_assertiveness": "65.5",
-        "reliability_level": "Média",
-        "trend_status": "Neutro",
         "offered_odds": "3.10",
-        "expected_value": "5.0",
         "source": "Scraper",
         "signal_id": "1234",
     })
-    assert "🟢 GREEN" in msg
+    assert "🟡 PENDENTE" in msg
     assert "Time A x Time B" in msg
     assert "Hipótese: Empate" in msg
-    assert "Status: paper trading / não operacional" in msg
-    assert "GREEN_SIM" not in msg  # Apenas 🟢 GREEN aparece no texto
+    assert "Status: aguardando resultado final / paper trading" in msg
     assert "[BLOCKED]" not in msg
 
 
-def test_build_message_red_sim_template():
-    msg = build_telegram_message("signal_summary", {
-        "label": "RED_SIM",
+def test_build_message_green_template():
+    msg = build_telegram_message("signal_resolved", {
+        "label": "GREEN",
+        "selection": "Visitante",
+    })
+    assert "🟢 GREEN" in msg
+    assert "Hipótese: Visitante" in msg
+    assert "Status: hipótese confirmada / paper trading" in msg
+
+def test_build_message_red_template():
+    msg = build_telegram_message("signal_resolved", {
+        "label": "RED",
         "selection": "Visitante",
     })
     assert "🔴 RED" in msg
-    assert "Hipótese rejeitada: Visitante" in msg
-    assert "Status: paper trading / não operacional" in msg
+    assert "Hipótese: Visitante" in msg
+    assert "Status: hipótese não confirmada / paper trading" in msg
 
 
 # ---------------------------------------------------------------------------
-# 12. notify_signal_summary funciona com mock
+# 12. notify_signal_pending e resolved funcionam com mock
 # ---------------------------------------------------------------------------
-def test_notify_signal_summary_with_mock():
-    res = notify_signal_summary(
-        {"label": "RED_SIM", "count": 3},
+def test_notify_signal_pending_with_mock():
+    res = notify_signal_pending(
+        {"count": 3},
+        env=_env_enabled(),
+        _mock_send=_mock_ok_send,
+    )
+    assert res["sent"] is True
+    assert res["actionable"] is False
+
+def test_notify_signal_resolved_with_mock():
+    res = notify_signal_resolved(
+        {"label": "RED"},
         env=_env_enabled(),
         _mock_send=_mock_ok_send,
     )

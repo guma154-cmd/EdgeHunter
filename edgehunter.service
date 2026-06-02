@@ -1,0 +1,15 @@
+[Unit]
+Description=EdgeHunter Runtime Engine
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/telematica/EdgeHunter
+ExecStart=/home/telematica/EdgeHunter/.venv/bin/python /home/telematica/EdgeHunter/scripts/run_runtime.py
+Restart=always
+RestartSec=10
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONPATH=/home/telematica/EdgeHunter"
+
+[Install]
+WantedBy=default.target

@@ -95,10 +95,37 @@ def _real_gemini_validate(prompt: str, config: dict) -> dict:
 
         # Reutiliza parser seguro existente
         from src.edgehunter.core.gemini_validator import parse_gemini_validation_response
-        parsed = parse_gemini_validation_response(raw_text)
+        import hashlib
+        prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        
+        parsed_obj = parse_gemini_validation_response(
+            raw_text,
+            opportunity_id="runtime_call",
+            prompt_hash=prompt_hash,
+            provider="gemini",
+            model_name=config["model"],
+        )
+
+        # Mapeia TechnicalVerdict para label
+        verdict = parsed_obj.technical_verdict
+        if hasattr(verdict, "value"):
+            verdict = verdict.value
+            
+        label_map = {
+            "pass": "VALIDATED",
+            "reject": "INVALIDATED",
+            "review": "UNRESOLVED",
+            "invalid_response": "UNRESOLVED",
+            "unavailable": "UNRESOLVED",
+        }
 
         result["raw_response"] = raw_text
-        result["parsed"] = parsed
+        result["parsed"] = {
+            "label": label_map.get(verdict, "UNRESOLVED"),
+            "confidence": parsed_obj.confidence,
+            "risk_factors": list(parsed_obj.risk_factors),
+            "rationale": parsed_obj.rationale,
+        }
         result["tokens_used"] = tokens_used
         result["valid"] = True
 

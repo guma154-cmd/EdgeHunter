@@ -54,6 +54,34 @@ def build_telegram_message(event_type: str, data: dict) -> str:
         else:
             safe_data[key] = val_str
 
+    if event_type == "runtime_status":
+        scraper_status_map = {
+            "EMPTY": "Nenhuma oportunidade encontrada neste ciclo.",
+            "SKIPPED": "Não executado.",
+        }
+        scraper_status = scraper_status_map.get(safe_data.get('scraper', ''), safe_data.get('scraper', 'N/A'))
+
+        ai_agent_status_map = {
+            "OK": "Comunicação OK.",
+            "SKIPPED": "Não executado.",
+        }
+        ai_agent_status = ai_agent_status_map.get(safe_data.get('gemini', ''), safe_data.get('gemini', 'N/A'))
+
+        resultado_map = {
+            "UNRESOLVED": "Sem ação necessária.",
+        }
+        resultado = resultado_map.get(safe_data.get('label', ''), safe_data.get('label', 'N/A'))
+
+        lines = [
+            "EdgeHunter v2.1.4 | Ciclo de Execução",
+            "",
+            "- 🏃 **Status:** Ativo e operando.",
+            f"- 📡 **Radar:** {scraper_status}",
+            f"- 🧠 **AI Agent:** {ai_agent_status}",
+            f"- ✅ **Resultado:** {resultado}"
+        ]
+        return "\n".join(lines)
+
     if event_type == "signal_pending":
         lines = ["🟡 PENDENTE", ""]
         lines.append(f"Jogo: {safe_data.get('home', 'N/A')} x {safe_data.get('away', 'N/A')}")
@@ -91,7 +119,7 @@ def build_telegram_message(event_type: str, data: dict) -> str:
         return "\n".join(lines)
 
     allowed_events = {
-        "runtime_status": "📊 Runtime Status",
+
         "signal_summary": "📈 Resumo Técnico",
         "daily_report": "📋 Relatório Diário",
         "error_alert": "⚠️ Alerta Técnico",

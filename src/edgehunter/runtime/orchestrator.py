@@ -107,7 +107,34 @@ def run_one_cycle(env: Optional[dict] = None, _mock_send=None, notified_set: Opt
         cycle_log["gemini_status"] = "SKIPPED"
         logger.info("Cycle: Radar EMPTY — skipping Gemini step")
     else:
-        gemini_result = _run_gemini_step("analise tecnica de dados locais", env or {}, cycle_log)
+        if os.environ.get("RADAR_PROFILE") == "test_active_leagues":
+            import json
+            try:
+                data = json.loads(scraper_result["items"][0])
+                event = data["events"][0]
+                home = event.get("strHomeTeam", "Home")
+                away = event.get("strAwayTeam", "Away")
+            except Exception:
+                home = "Home"
+                away = "Away"
+
+            gemini_result = {
+                "valid": True,
+                "parsed": {
+                    "signal_id": "TEST_AL_001",
+                    "home": home,
+                    "away": away,
+                    "selection": "Mandante",
+                    "calibrated_assertiveness": "80.0",
+                    "offered_odds": "2.00",
+                    "source": "TheSportsDB (Test Profile)"
+                },
+                "actionable": False
+            }
+            cycle_log["gemini_status"] = "OK_SIMULATED"
+            logger.info("Cycle: RADAR_PROFILE=test_active_leagues — injecting mock signal")
+        else:
+            gemini_result = _run_gemini_step("analise tecnica de dados locais", env or {}, cycle_log)
 
     # 3. Telegram: Runtime Status
     now = time.time()
@@ -136,13 +163,22 @@ def run_one_cycle(env: Optional[dict] = None, _mock_send=None, notified_set: Opt
 
     # 4. Notificações de Sinais Pendentes e Resolvidos
     from src.edgehunter.runtime.result_resolution_notifications import process_and_notify_signals
-    
+
     pending_signals = []
     if gemini_result.get("valid") and gemini_result.get("parsed"):
         pending_signals.append(gemini_result.get("parsed"))
-        
+
     resolved_outcomes = [] # TODO: Conectar com o módulo de extração de resultados (ObservedResult/Outcome Builder) quando estiver pronto
-    
+
+    if os.environ.get("RADAR_PROFILE") == "test_active_leagues" and os.environ.get("SIMULATE_RESULT"):
+        sim_res = os.environ.get("SIMULATE_RESULT")
+        resolved_outcomes.append({
+            "signal_id": "TEST_AL_001",
+            "selection": "Mandante",
+            "home_score": 2 if sim_res == "GREEN" else 1,
+            "away_score": 0 if sim_res == "GREEN" else 2,
+        })
+
     process_and_notify_signals(
         pending_signals=pending_signals,
         resolved_outcomes=resolved_outcomes,

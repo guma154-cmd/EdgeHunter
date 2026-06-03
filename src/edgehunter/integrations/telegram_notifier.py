@@ -27,11 +27,16 @@ _SAFE_RESULT_TEMPLATE = {
 
 def _load_telegram_config(env: Optional[dict] = None) -> dict:
     e = env or {}
+
+    def get_v(key, default):
+        val = e.get(key) if key in e else os.environ.get(key)
+        return val if val else default
+
     return {
-        "enabled": (e.get("TELEGRAM_ENABLED") or os.environ.get("TELEGRAM_ENABLED", "false")).lower() == "true",
-        "bot_token": e.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN", ""),
-        "chat_id": e.get("TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID", ""),
-        "timeout": int(e.get("TELEGRAM_TIMEOUT_SECONDS") or os.environ.get("TELEGRAM_TIMEOUT_SECONDS", "5")),
+        "enabled": str(get_v("TELEGRAM_ENABLED", "false")).lower() == "true",
+        "bot_token": get_v("TELEGRAM_BOT_TOKEN", ""),
+        "chat_id": get_v("TELEGRAM_CHAT_ID", ""),
+        "timeout": int(get_v("TELEGRAM_TIMEOUT_SECONDS", "5")),
     }
 
 
@@ -72,8 +77,12 @@ def build_telegram_message(event_type: str, data: dict) -> str:
         }
         resultado = resultado_map.get(safe_data.get('label', ''), safe_data.get('label', 'N/A'))
 
+        header_title = "Relatório"
+        if data.get("is_heartbeat"):
+            header_title = "Batimento Cardíaco (6h)"
+
         lines = [
-            "EdgeHunter v2.1.4 | Relatório",
+            f"EdgeHunter v2.1.4 | {header_title}",
             "",
             "🏃 Status: Ativo",
             f"📡 Radar: {scraper_status}",

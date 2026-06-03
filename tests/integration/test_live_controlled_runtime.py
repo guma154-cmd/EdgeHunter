@@ -112,7 +112,7 @@ def test_e2e_gemini_fallback(e2e_env):
 def test_e2e_telegram_mock_receives_message(e2e_env):
     from src.edgehunter.integrations.telegram_notifier import notify_runtime_status
     result = notify_runtime_status(
-        {"status": "E2E_TEST", "cycles": 1},
+        {"scraper": "E2E_TEST", "cycles": 1},
         env=e2e_env,
         _mock_send=_mock_telegram_send,
     )

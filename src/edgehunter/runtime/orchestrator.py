@@ -15,12 +15,20 @@ logger = logging.getLogger(__name__)
 
 def _load_runtime_config(env: Optional[dict] = None) -> dict:
     e = env or {}
-    raw_max = e.get("EDGEHUNTER_RUNTIME_MAX_CYCLES") or os.environ.get("EDGEHUNTER_RUNTIME_MAX_CYCLES", "")
+
+    def get_v(key, default):
+        val = e.get(key) if key in e else os.environ.get(key)
+        return val if val else default
+
     return {
-        "enabled": (e.get("EDGEHUNTER_RUNTIME_ENABLED") or os.environ.get("EDGEHUNTER_RUNTIME_ENABLED", "false")).lower() == "true",
-        "interval_seconds": int(e.get("EDGEHUNTER_RUNTIME_INTERVAL_SECONDS") or os.environ.get("EDGEHUNTER_RUNTIME_INTERVAL_SECONDS", "300")),
-        "max_cycles": int(raw_max) if raw_max else None,
-        "dry_run": (e.get("EDGEHUNTER_RUNTIME_DRY_RUN") or os.environ.get("EDGEHUNTER_RUNTIME_DRY_RUN", "true")).lower() == "true",
+        "enabled": str(get_v("EDGEHUNTER_RUNTIME_ENABLED", "false")).lower() == "true",
+        "interval_seconds": int(get_v("EDGEHUNTER_RUNTIME_INTERVAL_SECONDS", "300")),
+        "max_cycles": int(get_v("EDGEHUNTER_RUNTIME_MAX_CYCLES", "0")) if get_v("EDGEHUNTER_RUNTIME_MAX_CYCLES", "") else None,
+        "dry_run": str(get_v("EDGEHUNTER_RUNTIME_DRY_RUN", "true")).lower() == "true",
+        "notify_empty": str(get_v("TELEGRAM_NOTIFY_EMPTY_CYCLES", "false")).lower() == "true",
+        "heartbeat_enabled": str(get_v("TELEGRAM_HEARTBEAT_ENABLED", "true")).lower() == "true",
+        "heartbeat_interval_minutes": int(get_v("TELEGRAM_HEARTBEAT_INTERVAL_MINUTES", "360")),
+        "skip_gemini_empty": str(get_v("GEMINI_SKIP_WHEN_RADAR_EMPTY", "true")).lower() == "true",
     }
 
 
@@ -61,12 +69,16 @@ def _run_telegram_step(status_data: dict, env: dict, cycle_log: dict, _mock_send
         cycle_log["telegram_status"] = f"ERROR:{type(e).__name__}"
 
 
+_LAST_HEARTBEAT_TS = 0.0
+
+
 def run_one_cycle(env: Optional[dict] = None, _mock_send=None, notified_set: Optional[set] = None) -> dict:
     """
     Executa um único ciclo do runtime.
     Nunca executa ação financeira.
     Nunca autoaplica threshold.
     """
+    global _LAST_HEARTBEAT_TS
     config = _load_runtime_config(env)
     cycle_log = {
         "dry_run": config["dry_run"],
@@ -90,16 +102,37 @@ def run_one_cycle(env: Optional[dict] = None, _mock_send=None, notified_set: Opt
     scraper_result = _run_scraper_step(env or {}, cycle_log)
 
     # 2. Gemini (com prompt técnico genérico)
-    gemini_result = _run_gemini_step("analise tecnica de dados locais", env or {}, cycle_log)
+    gemini_result = {"valid": False, "parsed": {"label": "UNRESOLVED"}, "actionable": False}
+    if cycle_log["scraper_status"] == "EMPTY" and config["skip_gemini_empty"]:
+        cycle_log["gemini_status"] = "SKIPPED"
+        logger.info("Cycle: Radar EMPTY — skipping Gemini step")
+    else:
+        gemini_result = _run_gemini_step("analise tecnica de dados locais", env or {}, cycle_log)
 
     # 3. Telegram: Runtime Status
-    status_data = {
-        "cycle": "active",
-        "scraper": cycle_log["scraper_status"],
-        "gemini": cycle_log["gemini_status"],
-        "label": gemini_result.get("parsed", {}).get("label", "UNRESOLVED"),
-    }
-    _run_telegram_step(status_data, env or {}, cycle_log, _mock_send=_mock_send)
+    now = time.time()
+    is_heartbeat = False
+    if config["heartbeat_enabled"]:
+        # Se passaram X minutos desde o último heartbeat ou se é o primeiro ciclo
+        if (now - _LAST_HEARTBEAT_TS) >= (config["heartbeat_interval_minutes"] * 60) or _LAST_HEARTBEAT_TS == 0.0:
+            is_heartbeat = True
+            _LAST_HEARTBEAT_TS = now
+
+    should_notify = True
+    if cycle_log["scraper_status"] == "EMPTY" and not config["notify_empty"] and not is_heartbeat:
+        should_notify = False
+        cycle_log["telegram_status"] = "SUPPRESSED"
+        logger.info("Cycle: Radar EMPTY — suppressing Telegram status notification")
+
+    if should_notify:
+        status_data = {
+            "cycle": "active",
+            "scraper": cycle_log["scraper_status"],
+            "gemini": cycle_log["gemini_status"],
+            "label": gemini_result.get("parsed", {}).get("label", "UNRESOLVED"),
+            "is_heartbeat": is_heartbeat,
+        }
+        _run_telegram_step(status_data, env or {}, cycle_log, _mock_send=_mock_send)
 
     # 4. Notificações de Sinais Pendentes e Resolvidos
     from src.edgehunter.runtime.result_resolution_notifications import process_and_notify_signals

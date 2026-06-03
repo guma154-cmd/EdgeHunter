@@ -31,12 +31,17 @@ _SAFE_RESULT_TEMPLATE = {
 
 def _load_gemini_config(env: Optional[dict] = None) -> dict:
     e = env or {}
+
+    def get_v(key, default):
+        val = e.get(key) if key in e else os.environ.get(key)
+        return val if val else default
+
     return {
-        "enabled": (e.get("GEMINI_ENABLED") or os.environ.get("GEMINI_ENABLED", "false")).lower() == "true",
-        "api_key": e.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY", ""),
-        "model": e.get("GEMINI_MODEL") or os.environ.get("GEMINI_MODEL", "gemini-1.5-flash"),
-        "timeout": int(e.get("GEMINI_TIMEOUT_SECONDS") or os.environ.get("GEMINI_TIMEOUT_SECONDS", "5")),
-        "max_tokens": int(e.get("GEMINI_MAX_TOKENS") or os.environ.get("GEMINI_MAX_TOKENS", "1024")),
+        "enabled": str(get_v("GEMINI_ENABLED", "false")).lower() == "true",
+        "api_key": get_v("GEMINI_API_KEY", ""),
+        "model": get_v("GEMINI_MODEL", "gemini-1.5-flash"),
+        "timeout": int(get_v("GEMINI_TIMEOUT_SECONDS", "5")),
+        "max_tokens": int(get_v("GEMINI_MAX_TOKENS", "1024")),
     }
 
 

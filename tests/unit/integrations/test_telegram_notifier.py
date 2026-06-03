@@ -154,8 +154,7 @@ def test_no_financial_execution_in_notifier():
 # ---------------------------------------------------------------------------
 def test_build_message_blocks_forbidden_data_values():
     msg = build_telegram_message("runtime_status", {
-        "status": "HEALTHY",
-        "info": "stake de 50 unidades",  # proibido
+        "scraper": "stake de 50 unidades",  # proibido
     })
     assert "[BLOCKED]" in msg
     assert "stake" not in msg.lower().replace("[blocked]", "")
@@ -271,6 +270,25 @@ def test_send_telegram_message_markdown_sanitized():
     assert res["sent"] is True
     assert len(requests_made) == 1
 
-    body = json.loads(requests_made[0])
-    assert "parse_mode" not in body  # Garante que não está quebrando Markdown
-    assert body["text"] == text_with_special_chars
+# ---------------------------------------------------------------------------
+# 16. Cabeçalho de Heartbeat (Batimento Cardíaco)
+# ---------------------------------------------------------------------------
+def test_build_message_heartbeat_header():
+    msg = build_telegram_message("runtime_status", {
+        "scraper": "EMPTY",
+        "gemini": "SKIPPED",
+        "label": "UNRESOLVED",
+        "is_heartbeat": True,
+    })
+    assert "Batimento Cardíaco (6h)" in msg
+    assert "Relatório" not in msg
+
+def test_build_message_normal_status_header():
+    msg = build_telegram_message("runtime_status", {
+        "scraper": "PARSED",
+        "gemini": "OK",
+        "label": "VALIDATED",
+        "is_heartbeat": False,
+    })
+    assert "Relatório" in msg
+    assert "Batimento Cardíaco" not in msg

@@ -117,10 +117,12 @@ def test_scraper_error_does_not_crash_runtime():
 # 6. Erro no Gemini gera fallback
 # ---------------------------------------------------------------------------
 def test_gemini_error_generates_fallback():
-    with patch("src.edgehunter.integrations.gemini_client.validate_with_gemini",
-               side_effect=RuntimeError("gemini down")):
-        env = {**_env_active_1_cycle(), "GEMINI_ENABLED": "true", "GEMINI_API_KEY": "FAKE"}
-        summary = run_runtime(env=env)
+    with patch("src.edgehunter.integrations.scraper_client.run_scraper_once",
+               return_value={"status": "PARSED", "items": ["jogo 1"]}):
+        with patch("src.edgehunter.integrations.gemini_client.validate_with_gemini",
+                   side_effect=RuntimeError("gemini down")):
+            env = {**_env_active_1_cycle(), "GEMINI_ENABLED": "true", "GEMINI_API_KEY": "FAKE"}
+            summary = run_runtime(env=env)
     assert summary["cycles_executed"] == 1
     cycle = summary["cycles"][0]
     assert "ERROR" in cycle.get("gemini_status", "")
@@ -133,9 +135,11 @@ def test_telegram_error_is_logged():
     def failing_send(token, chat_id, text, config):
         raise RuntimeError("telegram down")
 
-    env = {**_env_active_1_cycle(), "TELEGRAM_ENABLED": "true",
-           "TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "123"}
-    summary = run_runtime(env=env, _mock_send=failing_send)
+    with patch("src.edgehunter.integrations.scraper_client.run_scraper_once",
+               return_value={"status": "PARSED", "items": ["jogo 1"]}):
+        env = {**_env_active_1_cycle(), "TELEGRAM_ENABLED": "true",
+               "TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "123"}
+        summary = run_runtime(env=env, _mock_send=failing_send)
     assert summary["cycles_executed"] == 1
     cycle = summary["cycles"][0]
     assert "ERROR" in cycle.get("telegram_status", "")
@@ -148,7 +152,6 @@ def test_no_infinite_loop():
     env = {**_env_active_1_cycle(), "EDGEHUNTER_RUNTIME_MAX_CYCLES": "2"}
     import time
     calls = []
-    original_sleep = time.sleep
     def mock_sleep(n):
         calls.append(n)
     with patch.object(time, "sleep", mock_sleep):
@@ -210,7 +213,6 @@ def test_load_runtime_config():
 # ---------------------------------------------------------------------------
 def test_keyboard_interrupt_clean_shutdown():
     cycle_count = 0
-    original_run_one = run_one_cycle
 
     def mock_cycle(env=None, _mock_send=None, notified_set=None):
         nonlocal cycle_count
@@ -228,3 +230,75 @@ def test_keyboard_interrupt_clean_shutdown():
         }
         summary = run_runtime(env=env)
     assert summary["shutdown_reason"] == "keyboard_interrupt"
+
+
+# ---------------------------------------------------------------------------
+# 14. Pulo do Gemini em Radar EMPTY
+# ---------------------------------------------------------------------------
+def test_gemini_skipped_on_empty_radar():
+    with patch("src.edgehunter.integrations.scraper_client.run_scraper_once",
+               return_value={"status": "EMPTY", "items": []}):
+        with patch("src.edgehunter.integrations.gemini_client.validate_with_gemini") as mock_gemini:
+            env = {
+                "EDGEHUNTER_RUNTIME_ENABLED": "true",
+                "EDGEHUNTER_RUNTIME_DRY_RUN": "false",
+                "EDGEHUNTER_RUNTIME_MAX_CYCLES": "1",
+                "GEMINI_SKIP_WHEN_RADAR_EMPTY": "true",
+                "TELEGRAM_NOTIFY_EMPTY_CYCLES": "true", # Garante que entra no loop de notificação
+            }
+            summary = run_runtime(env=env)
+            assert summary["cycles"][0]["gemini_status"] == "SKIPPED"
+            mock_gemini.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 15. Supressão de Telegram em Radar EMPTY
+# ---------------------------------------------------------------------------
+def test_telegram_suppressed_on_empty_radar():
+    import src.edgehunter.runtime.orchestrator as orch
+    # Força TS para evitar heartbeat no primeiro ciclo para este teste
+    orch._LAST_HEARTBEAT_TS = 9999999999.0
+
+    with patch("src.edgehunter.integrations.scraper_client.run_scraper_once",
+               return_value={"status": "EMPTY", "items": []}):
+        with patch("src.edgehunter.integrations.telegram_notifier.notify_runtime_status") as mock_tel:
+            env = {
+                "EDGEHUNTER_RUNTIME_ENABLED": "true",
+                "EDGEHUNTER_RUNTIME_DRY_RUN": "false",
+                "EDGEHUNTER_RUNTIME_MAX_CYCLES": "1",
+                "TELEGRAM_NOTIFY_EMPTY_CYCLES": "false",
+                "TELEGRAM_HEARTBEAT_ENABLED": "true",
+                "TELEGRAM_HEARTBEAT_INTERVAL_MINUTES": "360",
+            }
+            summary = run_runtime(env=env)
+            assert summary["cycles"][0]["telegram_status"] == "SUPPRESSED"
+            mock_tel.assert_not_called()
+
+    # Limpa estado para próximos testes
+    orch._LAST_HEARTBEAT_TS = 0.0
+
+
+# ---------------------------------------------------------------------------
+# 16. Heartbeat enviado mesmo em Radar EMPTY
+# ---------------------------------------------------------------------------
+def test_heartbeat_sent_on_empty_radar():
+    import src.edgehunter.runtime.orchestrator as orch
+    orch._LAST_HEARTBEAT_TS = 0.0 # Gatilha heartbeat imediato
+
+    with patch("src.edgehunter.integrations.scraper_client.run_scraper_once",
+               return_value={"status": "EMPTY", "items": []}):
+        with patch("src.edgehunter.integrations.telegram_notifier.notify_runtime_status",
+                   return_value={"sent": True}) as mock_tel:
+            env = {
+                "EDGEHUNTER_RUNTIME_ENABLED": "true",
+                "EDGEHUNTER_RUNTIME_DRY_RUN": "false",
+                "EDGEHUNTER_RUNTIME_MAX_CYCLES": "1",
+                "TELEGRAM_NOTIFY_EMPTY_CYCLES": "false",
+                "TELEGRAM_HEARTBEAT_ENABLED": "true",
+            }
+            summary = run_runtime(env=env)
+            assert summary["cycles"][0]["telegram_status"] == "SENT"
+            mock_tel.assert_called_once()
+            # Verifica se is_heartbeat foi passado
+            args, kwargs = mock_tel.call_args
+            assert args[0]["is_heartbeat"] is True

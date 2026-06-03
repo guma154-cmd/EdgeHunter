@@ -73,12 +73,12 @@ def build_telegram_message(event_type: str, data: dict) -> str:
         resultado = resultado_map.get(safe_data.get('label', ''), safe_data.get('label', 'N/A'))
 
         lines = [
-            "EdgeHunter v2.1.4 | Ciclo de Execução",
+            "EdgeHunter v2.1.4 | Relatório",
             "",
-            "- 🏃 **Status:** Ativo e operando.",
-            f"- 📡 **Radar:** {scraper_status}",
-            f"- 🧠 **AI Agent:** {ai_agent_status}",
-            f"- ✅ **Resultado:** {resultado}"
+            "🏃 Status: Ativo",
+            f"📡 Radar: {scraper_status}",
+            f"🧠 Agente IA: {ai_agent_status}",
+            f"✅ Resultado: {resultado}"
         ]
         return "\n".join(lines)
 

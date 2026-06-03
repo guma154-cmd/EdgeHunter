@@ -62,7 +62,7 @@ def build_telegram_message(event_type: str, data: dict) -> str:
         scraper_status = scraper_status_map.get(safe_data.get('scraper', ''), safe_data.get('scraper', 'N/A'))
 
         ai_agent_status_map = {
-            "OK": "Comunicação OK.",
+            "OK": " OK.",
             "SKIPPED": "Não executado.",
         }
         ai_agent_status = ai_agent_status_map.get(safe_data.get('gemini', ''), safe_data.get('gemini', 'N/A'))

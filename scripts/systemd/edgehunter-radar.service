@@ -1,0 +1,16 @@
+[Unit]
+Description=EdgeHunter Async Radar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/EdgeHunter
+EnvironmentFile=%h/EdgeHunter/.env
+Environment=PYTHONPATH=%h/EdgeHunter
+ExecStart=%h/EdgeHunter/.venv/bin/python %h/EdgeHunter/backend/async_radar.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

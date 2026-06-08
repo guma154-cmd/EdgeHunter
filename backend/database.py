@@ -1,11 +1,13 @@
 import asyncio
+from typing import Optional
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column
-from sqlalchemy import BigInteger, DateTime, Float, String, Text, func
-from sqlalchemy.dialects.postgresql import JSONB # Importar JSONB
+from sqlalchemy import BigInteger, DateTime, Float, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime, timezone
 import logging
 import os
+import json
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,11 +35,67 @@ class ValueOpportunityLog(Base):
     bankroll_snapshot: Mapped[float] = mapped_column(Float, nullable=False, comment="Snapshot do saldo da banca no momento da detecção")
     match_details: Mapped[dict] = mapped_column(JSONB, nullable=True, comment="Detalhes completos do jogo em formato JSON ou texto")
     raw_odds_source: Mapped[dict] = mapped_column(JSONB, nullable=True, comment="Dados brutos das odds que geraram esta oportunidade (JSON)")
+    closing_odd_home: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closing_odd_draw: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closing_odd_away: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    closing_odd_selection: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    btcl_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    clv_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     def __repr__(self):
         return (f"<ValueOpportunityLog(id={self.id}, event_id='{self.event_id}', "
                 f"bookmaker='{self.bookmaker}', selection='{self.selection}', "
                 f"value_edge={self.value_edge:.4f})>")
+
+
+class OddsHistory(Base):
+    """
+    Historico bruto de odds 1X2 extraidas para backtesting e CLV.
+    Registra todo evento consumido pelo worker, mesmo sem oportunidade validada.
+    """
+    __tablename__ = 'odds_history'
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    extracted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), index=True)
+    event_id: Mapped[str] = mapped_column(String(255), index=True, nullable=False, comment="ID unico do evento esportivo")
+    league: Mapped[str] = mapped_column(String(255), index=True, nullable=True, comment="Liga/competicao do evento")
+    home_team: Mapped[str] = mapped_column(String(255), nullable=True, comment="Time mandante")
+    away_team: Mapped[str] = mapped_column(String(255), nullable=True, comment="Time visitante")
+    bookmaker: Mapped[str] = mapped_column(String(100), index=True, nullable=False, comment="Fonte/casa das odds")
+    market_type: Mapped[str] = mapped_column(String(100), nullable=False, default="1X2", comment="Mercado das odds")
+    event_start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True, comment="Horario previsto do evento")
+    home_odd: Mapped[float] = mapped_column(Float, nullable=False, comment="Odd do mandante")
+    draw_odd: Mapped[float] = mapped_column(Float, nullable=False, comment="Odd do empate")
+    away_odd: Mapped[float] = mapped_column(Float, nullable=False, comment="Odd do visitante")
+    raw_odds_source: Mapped[dict] = mapped_column(JSONB, nullable=True, comment="Payload bruto que originou a linha historica")
+
+    def __repr__(self):
+        return (f"<OddsHistory(id={self.id}, event_id='{self.event_id}', "
+                f"home_odd={self.home_odd:.4f}, draw_odd={self.draw_odd:.4f}, "
+                f"away_odd={self.away_odd:.4f})>")
+
+
+class OddsTimeSeries(Base):
+    """
+    Serie temporal de odds 1X2 capturadas continuamente por bookmaker.
+    """
+    __tablename__ = "odds_time_series"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    sport_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    home_team: Mapped[str] = mapped_column(String(255), nullable=False)
+    away_team: Mapped[str] = mapped_column(String(255), nullable=False)
+    commence_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    capture_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), index=True)
+    bookmaker: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    home_odd: Mapped[float] = mapped_column(Float, nullable=False)
+    draw_odd: Mapped[float] = mapped_column(Float, nullable=False)
+    away_odd: Mapped[float] = mapped_column(Float, nullable=False)
+
+    def __repr__(self):
+        return (f"<OddsTimeSeries(id={self.id}, event_id='{self.event_id}', "
+                f"bookmaker='{self.bookmaker}', capture_timestamp={self.capture_timestamp})>")
 
 # Configuração do banco de dados (deve vir de variáveis de ambiente)
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost/edgehunter_db")
@@ -65,33 +123,3 @@ class AsyncDatabase:
                 yield session
             finally:
                 await session.close()
-
-# Exemplo de uso
-async def main():
-    db_manager = AsyncDatabase()
-    await db_manager.init_db()
-
-    # Exemplo de inserção de dados
-    async with db_manager.AsyncSessionLocal() as session:
-        new_log = ValueOpportunityLog(
-            event_id="match_12345",
-            bookmaker="Bet365",
-            market_type="Match Odds",
-            selection="Home Win",
-            odd=2.10,
-            true_probability=0.50,
-            value_edge=0.05,
-            stake=10.50,
-            bankroll_snapshot=1000.00,
-            match_details=json.dumps({"team_a": "Team A", "team_b": "Team B"}),
-            raw_odds_source=json.dumps({"bookie_data": {"odd_home": 2.15, "odd_draw": 3.20, "odd_away": 3.50}})
-        )
-        session.add(new_log)
-        await session.commit()
-        logging.info(f"Oportunidade de valor registrada: {new_log}")
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        logging.critical(f"Erro fatal no exemplo do banco de dados: {e}", exc_info=True)

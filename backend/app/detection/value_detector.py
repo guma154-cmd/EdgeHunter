@@ -3,41 +3,80 @@ EdgeHunter — Value Detector
 Detecta apostas com edge positivo comparando nossas probabilidades
 com as odds da Pinnacle (sharp line) e casas soft.
 """
+import asyncio
+import os
+import functools
+import concurrent.futures
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 import logging
+from scipy.optimize import minimize_scalar
 
 logger = logging.getLogger(__name__)
 
+def _objective_function(k: float, probs_array: np.ndarray) -> float:
+    return abs(np.sum(probs_array ** k) - 1.0)
 
-def implied_probability(odd: float, margin_removed: bool = False) -> float:
+async def power_method_overround_removal(implied_probs: List[float]) -> List[float]:
     """
-    Converte odd decimal em probabilidade implícita.
+    Remove o overround das probabilidades implícitas usando o Power Method.
+    Este método ajusta as probabilidades para corrigir o viés de favorito-zebra.
     
     Args:
-        odd: Odd decimal (ex: 2.10)
-        margin_removed: Se True, remove o overround da casa
+        implied_probs: Lista de probabilidades implícitas (ex: [0.5, 0.25, 0.25])
+    
+    Returns:
+        Lista de probabilidades justas ajustadas.
     """
-    if odd <= 1.0:
-        return 1.0
-    return 1.0 / odd
+    probs_array = np.array(implied_probs)
+    
+    # Se a soma das probabilidades já é 1 (sem overround), retorna as probabilidades originais
+    if np.isclose(np.sum(probs_array), 1.0):
+        return implied_probs
+    
+    # Se houver underround, ajusta proporcionalmente e retorna
+    if np.sum(probs_array) < 1.0:
+        return (probs_array / np.sum(probs_array)).tolist()
+
+    # Otimiza para encontrar o melhor 'k' em um ProcessPoolExecutor
+    loop = asyncio.get_running_loop()
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        res = await loop.run_in_executor(
+            executor,
+            functools.partial(
+                minimize_scalar,
+                _objective_function,
+                args=(probs_array,),
+                bounds=(0.1, 3.0),
+                method='bounded'
+            )
+        )
+    
+    k_optimal = res.x
+    
+    # Aplica o k ótimo e normaliza
+    adjusted_probs = probs_array ** k_optimal
+    normalized_probs = adjusted_probs / np.sum(adjusted_probs)
+    
+    return normalized_probs.tolist()
 
 
-def remove_overround(
+def implied_probability(odd: float) -> float:
+    return 1.0 / odd if odd > 0 else 0.0
+
+async def remove_overround(
     home_odd: float, draw_odd: float, away_odd: float
 ) -> Tuple[float, float, float]:
     """
-    Remove o overround das odds para obter probabilidades justas.
-    Usa o método Shin para distribuição proporcional.
+    Remove o overround das odds para obter probabilidades justas usando o Power Method.
     """
-    implied_h = 1 / home_odd
-    implied_d = 1 / draw_odd
-    implied_a = 1 / away_odd
+    implied_h = implied_probability(home_odd)
+    implied_d = implied_probability(draw_odd)
+    implied_a = implied_probability(away_odd)
     
-    total = implied_h + implied_d + implied_a
+    fair_probs = await power_method_overround_removal([implied_h, implied_d, implied_a])
     
-    # Normalizar (remove overround igualmente)
-    return implied_h / total, implied_d / total, implied_a / total
+    return fair_probs[0], fair_probs[1], fair_probs[2]
 
 
 def calculate_edge(our_prob: float, odd: float) -> float:
@@ -50,24 +89,42 @@ def calculate_edge(our_prob: float, odd: float) -> float:
     return (our_prob * odd) - 1.0
 
 
-def kelly_fraction(our_prob: float, odd: float, fraction: float = 0.25) -> float:
+max_stake_pct = 0.05 # Limite rígido de segurança para a aposta
+
+def kelly_fraction(our_prob: float, odd: float, bankroll_balance: float, fraction: float = 0.25) -> float:
     """
     Critério de Kelly Fracionado para dimensionamento de posição.
-    Usamos 25% do Kelly completo (mais conservador).
+    Usamos 25% do Kelly completo (mais conservador) ou 1/8 (0.125).
     
     Args:
         our_prob: Nossa probabilidade estimada
         odd: Odd decimal disponível
-        fraction: Fração do Kelly (0.25 = quarter Kelly)
+        bankroll_balance: Saldo atual da banca
+        fraction: Fração do Kelly (0.25 = quarter Kelly, 0.125 = eighth Kelly)
     
     Returns:
-        Percentual do bankroll para apostar
+        Valor da aposta em moeda.
     """
-    b = odd - 1
-    q = 1 - our_prob
-    kelly = (b * our_prob - q) / b
+    if bankroll_balance <= 0:
+        return 0.0
+
+    b = odd - 1 # Retorno líquido por unidade apostada
+    q = 1 - our_prob # Probabilidade de perder
     
-    return max(0, kelly * fraction)
+    # Evita divisão por zero se b for 0 (odd = 1.0, o que não deve acontecer para value bets)
+    if b <= 0:
+        return 0.0
+
+    kelly_percentage = (b * our_prob - q) / b
+    
+    # Aplica a fração e garante que a aposta não seja negativa
+    stake_percentage = max(0, kelly_percentage * fraction)
+    
+    # Adiciona limite rígido de segurança: máximo de 5% da banca
+    stake_percentage = min(stake_percentage, max_stake_pct)
+    
+    # Retorna o valor em moeda
+    return bankroll_balance * stake_percentage
 
 
 class ValueDetector:
@@ -87,8 +144,10 @@ class ValueDetector:
             min_edge_pct: Edge mínimo para gerar alerta (%)
         """
         self.min_edge_pct = min_edge_pct / 100.0
+        # Placeholder para o saldo da banca, em um sistema real viria de um serviço
+        self.current_bankroll_balance = float(os.getenv("INITIAL_BANKROLL", 1000.0))
     
-    def analyze(
+    async def analyze( # Alterado para async
         self,
         home_team: str,
         away_team: str,
@@ -106,7 +165,7 @@ class ValueDetector:
         
         # Probabilidades da Pinnacle sem overround (fair odds)
         if all(k in pinnacle_odds for k in ['home', 'draw', 'away']):
-            pin_fair = remove_overround(
+            pin_fair = await remove_overround( # await adicionado
                 pinnacle_odds['home'],
                 pinnacle_odds['draw'],
                 pinnacle_odds['away']
@@ -132,7 +191,10 @@ class ValueDetector:
                 
                 if edge >= self.min_edge_pct:
                     implied_p = implied_probability(odd)
-                    kelly = kelly_fraction(our_p, odd)
+                    
+                    # Calcula a fração de Kelly e o stake
+                    # A fração pode ser configurável, aqui usamos 0.25 como default (quarter Kelly)
+                    stake = kelly_fraction(our_p, odd, self.current_bankroll_balance, fraction=0.25)
                     
                     # Verificação adicional: nossa prob > Pinnacle fair?
                     pinnacle_p = pinnacle_fair.get(selection) if pinnacle_fair else None
@@ -156,7 +218,7 @@ class ValueDetector:
                         'implied_prob': round(implied_p, 4),
                         'pinnacle_fair_prob': round(pinnacle_p, 4) if pinnacle_p else None,
                         'edge_pct': round(edge_pct, 2),
-                        'kelly_fraction': round(kelly, 4),
+                        'kelly_stake': round(stake, 2), # Alterado para 'kelly_stake' para refletir o valor monetário
                         'confidence': round(confidence, 1),
                         'has_edge_vs_pinnacle': has_edge_vs_pinnacle
                     })

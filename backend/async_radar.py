@@ -1,4 +1,3 @@
-
 import asyncio
 import aiohttp
 from redis import asyncio as aioredis
@@ -24,14 +23,9 @@ BETSAPI_KEY = os.getenv("BETSAPI_KEY", "")
 
 # Ligas de Interesse (Exemplo)
 LEAGUES_OF_INTEREST = {
-    "FIFA World Cup 2026": 15,
-    "Brazil Serie A": 325,
-    "Brazil Serie B": 326,
-    "USA MLS": 132,
-    "Argentina Liga Profesional": 155,
-    "Japan J1 League": 292,
-    "Norway Eliteserien": 374,
-    "Sweden Allsvenskan": 393
+    "World Cup 2026": 33207,
+    "Int. Friendlies": 598,
+    "USA MLS": 242
 }
 
 # Configuração de proxies: vazio usa conexão direta do host.
@@ -83,9 +77,6 @@ class AsyncRadar:
         Processa um único fixture: busca odds de outras fontes (se necessário)
         e publica no Redis.
         """
-        # A lógica de buscar em outras fontes (Pinnacle, etc.) seria adicionada aqui.
-        # Por enquanto, apenas publicamos os dados normalizados da BetsAPI.
-        
         # Valida a cota ANTES de qualquer request que seria feito aqui
         await self.rate_limiter.check_limit()
 
@@ -106,8 +97,7 @@ class AsyncRadar:
             logging.info(f"Fixture '{data.get('home_team')} vs {data.get('away_team')}' publicado no Redis.")
         except aioredis.RedisError as e:
             logging.error(f"Erro ao publicar no Redis: {e}. Tentando reconectar na próxima iteração.")
-            # A reconexão agora é tratada no início da função
-            self.redis_client = None # Força a reconexão na próxima chamada
+            self.redis_client = None
 
     async def start_orchestrator(self):
         """
@@ -128,7 +118,7 @@ class AsyncRadar:
 
                     if not upcoming_fixtures:
                         logging.info("Nenhum jogo encontrado na janela de alvo. Aguardando próximo ciclo.")
-                        await asyncio.sleep(60 * 5) # Espera 5 minutos se não houver jogos
+                        await asyncio.sleep(60 * 5)
                         continue
 
                     # 3. Cria tarefas para processar cada jogo

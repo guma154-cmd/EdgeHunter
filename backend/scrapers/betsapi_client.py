@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,12 +11,16 @@ logger = logging.getLogger(__name__)
 
 NormalizedOdd = Dict[str, Any]
 
+PINNACLE_ID = os.getenv("PINNACLE_ID", "PinnacleSports").strip(' "\'')
+soft_env = os.getenv("SOFT_BOOKIES_IDS", "Bet365,BWin,1XBet").strip(' "\'')
+SOFT_BOOKIES_IDS = [x.strip() for x in soft_env.split(",")]
 
 class BetsAPIClient:
     """
     Cliente para a BetsAPI com fluxo em duas etapas:
     1. v2/events/upcoming para calendário.
     2. v2/event/odds para odds 1X2 por event_id.
+    Faz a Dupla Ingestão (Sharp + Soft).
     """
 
     UPCOMING_URL = "https://api.betsapi.com/v2/events/upcoming"
@@ -36,21 +41,20 @@ class BetsAPIClient:
 
     async def get_upcoming_fixtures(self, hours_ahead: int = 4) -> List[NormalizedOdd]:
         """
-        Busca eventos dentro da janela e enriquece cada evento com odds 1X2
-        obtidas em v2/event/odds.
+        Busca eventos dentro da janela e enriquece com odds.
         """
         if not self.api_key:
             return self._get_mock_data()
 
         all_fixtures: List[NormalizedOdd] = []
+        session = await self.proxy_rotator.get_client_session()
 
         for league_name, league_id in self.leagues_of_interest.items():
-            session = await self.proxy_rotator.get_client_session()
             proxy_url, proxy_auth = await self._get_proxy_details()
             params = {
                 "token": self.api_key,
-                "league_id": str(league_id),
                 "sport_id": "1",
+                "league_id": str(league_id),
             }
 
             try:
@@ -66,45 +70,50 @@ class BetsAPIClient:
                     data = await response.json(content_type=None)
 
                 if data.get("success") != 1 or "results" not in data:
-                    logger.error(
-                        "Erro na resposta de calendario da BetsAPI para liga '%s': %s",
-                        league_name,
-                        data.get("error", "Sem detalhes"),
-                    )
+                    logger.error("Erro na resposta de '%s': %s", league_name, data.get("error", "Sem detalhes"))
                     continue
 
                 events = self._filter_events_by_window(data["results"], hours_ahead)
                 logger.info(
                     "Encontrados %s eventos dentro da janela para liga '%s'. Buscando odds 1X2.",
                     len(events),
-                    league_name,
+                    league_name
                 )
 
+                league_fixtures_count = 0
                 for event in events:
                     await asyncio.sleep(self.ODDS_THROTTLE_SECONDS)
                     normalized = await self._build_fixture_with_odds(session, event)
                     if normalized is not None:
                         all_fixtures.append(normalized)
+                        league_fixtures_count += 1
 
-                logger.info(
-                    "Liga '%s': %s fixtures com odds 1X2 prontos para Redis.",
-                    league_name,
-                    len([fixture for fixture in all_fixtures if fixture.get("league") == league_name]),
-                )
+                logger.info("Liga '%s': %s fixtures com odds 1X2 prontos para Redis.", league_name, league_fixtures_count)
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.error("Erro de rede ao buscar calendario da BetsAPI para liga '%s': %s", league_name, e)
+                logger.error("Erro de rede ao buscar liga '%s': %s", league_name, e)
                 if proxy_url:
                     await self.proxy_rotator.mark_proxy_bad(proxy_url)
             except Exception as e:
-                logger.error(
-                    "Erro inesperado ao processar calendario da BetsAPI para liga '%s': %s",
-                    league_name,
-                    e,
-                    exc_info=True,
-                )
+                logger.error("Erro inesperado ao processar liga '%s': %s", league_name, e, exc_info=True)
 
         return all_fixtures
+
+    async def _fetch_odds_for_source(self, session: aiohttp.ClientSession, event_id: str, proxy_url: str, proxy_auth: Any, source_id: str) -> Any:
+        params = {
+            "token": self.api_key,
+            "event_id": event_id.strip(),
+            "source": source_id.strip()
+        }
+        async with session.get(
+            self.ODDS_URL,
+            params=params,
+            proxy=proxy_url,
+            proxy_auth=proxy_auth,
+            timeout=20,
+        ) as response:
+            response.raise_for_status()
+            return await response.json(content_type=None)
 
     async def _build_fixture_with_odds(
         self,
@@ -117,47 +126,80 @@ class BetsAPIClient:
             return None
 
         proxy_url, proxy_auth = await self._get_proxy_details()
-        params = {
-            "token": self.api_key,
-            "event_id": event_id,
-        }
 
         try:
-            async with session.get(
-                self.ODDS_URL,
-                params=params,
-                proxy=proxy_url,
-                proxy_auth=proxy_auth,
-                timeout=20,
-            ) as response:
-                response.raise_for_status()
-                payload = await response.json(content_type=None)
+            try:
+                pinnacle_payload = await self._fetch_odds_for_source(session, event_id, proxy_url, proxy_auth, PINNACLE_ID)
+            except Exception as e:
+                logger.warning("Erro real na Pinnacle para evento %s: %s", event_id, e)
+                return None
+            
+            await asyncio.sleep(1.5)
 
-            odds_data = payload["results"]["odds"]["1_1"][0]
-            home_odd = float(odds_data["home_od"])
-            draw_odd = float(odds_data["draw_od"])
-            away_odd = float(odds_data["away_od"])
+            if pinnacle_payload.get("success") != 1 or not pinnacle_payload.get("results"):
+                logger.warning("Evento %s descartado: Pinnacle indisponível (Payload: %s)", event_id, pinnacle_payload.get("error", pinnacle_payload))
+                return None
+
+            try:
+                pin_odds_data = pinnacle_payload["results"]["odds"]["1_1"][0]
+                pinnacle_odds = {
+                    "bookmaker": "Pinnacle",
+                    "bookmaker_id": PINNACLE_ID,
+                    "home": float(pin_odds_data["home_od"]),
+                    "draw": float(pin_odds_data["draw_od"]),
+                    "away": float(pin_odds_data["away_od"])
+                }
+            except (KeyError, IndexError, TypeError, ValueError) as e:
+                logger.warning("Evento %s descartado: Pinnacle indisponível (dados invalidos) %s", event_id, e)
+                return None
+
+            soft_odds_list = []
+            for soft_id in SOFT_BOOKIES_IDS:
+                try:
+                    soft_payload = await self._fetch_odds_for_source(session, event_id, proxy_url, proxy_auth, soft_id)
+                except Exception as e:
+                    logger.warning("Erro real na casa Soft %s para evento %s: %s", soft_id, event_id, e)
+                    continue
+                
+                await asyncio.sleep(1.5)
+
+                if soft_payload.get("success") != 1 or not soft_payload.get("results"):
+                    continue
+                try:
+                    soft_data = soft_payload["results"]["odds"]["1_1"][0]
+                    # Tenta mapear o nome amigável ou fallback para o ID
+                    bookie_name = "Bet365" if soft_id in ("1", "bet365") else "Betano" if soft_id in ("32", "betano") else f"Soft_{soft_id}"
+                    
+                    soft_odds_list.append({
+                        "bookmaker": bookie_name,
+                        "bookmaker_id": soft_id,
+                        "home": float(soft_data["home_od"]),
+                        "draw": float(soft_data["draw_od"]),
+                        "away": float(soft_data["away_od"])
+                    })
+                except (KeyError, IndexError, TypeError, ValueError):
+                    continue
+
+            if not soft_odds_list:
+                logger.info("Evento %s descartado: odds invalidas nas casas Soft", event_id)
+                return None
+
             event_time_utc = datetime.fromtimestamp(int(event["time"]), tz=timezone.utc)
 
             return {
-                "match_id": event_id,
+                "event_id": event_id,
                 "timestamp": event_time_utc.isoformat(),
                 "league": event.get("league", {}).get("name"),
                 "home_team": event.get("home", {}).get("name"),
                 "away_team": event.get("away", {}).get("name"),
-                "home_odd": home_odd,
-                "draw_odd": draw_odd,
-                "away_odd": away_odd,
-                "raw_source": "BetsAPI",
+                "pinnacle_odds": pinnacle_odds,
+                "soft_odds": soft_odds_list,
+                "raw_source": "BetsAPI_Dual",
                 "raw_data": {
-                    "event": event,
-                    "odds": odds_data,
+                    "event": event
                 },
             }
 
-        except (KeyError, IndexError, TypeError, ValueError) as e:
-            logger.info("Evento %s descartado: odds 1X2 indisponiveis ou invalidas: %s", event_id, e)
-            return None
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             logger.error("Erro de rede ao buscar odds do evento %s: %s", event_id, e)
             if proxy_url:
@@ -197,15 +239,28 @@ class BetsAPIClient:
         now = datetime.now(timezone.utc)
         return [
             {
-                "match_id": "mock_12345",
+                "event_id": "mock_12345",
                 "timestamp": (now + timedelta(hours=1)).isoformat(),
                 "league": "Mock League",
                 "home_team": "Mock Team A",
                 "away_team": "Mock Team B",
-                "home_odd": 2.10,
-                "draw_odd": 3.40,
-                "away_odd": 3.80,
-                "raw_source": "BetsAPI_Mock",
+                "pinnacle_odds": {
+                    "bookmaker": "Pinnacle",
+                    "bookmaker_id": "73",
+                    "home": 2.10,
+                    "draw": 3.40,
+                    "away": 3.80
+                },
+                "soft_odds": [
+                    {
+                        "bookmaker": "Bet365",
+                        "bookmaker_id": "1",
+                        "home": 2.15,
+                        "draw": 3.30,
+                        "away": 3.50
+                    }
+                ],
+                "raw_source": "BetsAPI_Mock_Dual",
                 "raw_data": {},
             }
         ]

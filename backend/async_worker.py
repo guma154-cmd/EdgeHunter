@@ -6,7 +6,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 from redis import asyncio as aioredis
 from sqlalchemy.exc import SQLAlchemyError
@@ -19,9 +19,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.detection.value_detector import ValueDetector
-from database import AsyncDatabase, ValueOpportunityLog
+from database import AsyncDatabase, OddsHistory, ValueOpportunityLog
 from utils.telegram_bot import AsyncTelegramBot
-
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -32,7 +31,6 @@ BLPOP_TIMEOUT_SECONDS = int(os.getenv("WORKER_BLPOP_TIMEOUT_SECONDS", "1"))
 BOOKMAKER_NAME = os.getenv("WORKER_BOOKMAKER_NAME", "BetsAPI_Mock")
 MARKET_TYPE = os.getenv("WORKER_MARKET_TYPE", "1X2")
 MIN_EDGE_PCT = float(os.getenv("WORKER_MIN_EDGE_PCT", "0.0"))
-
 
 class AsyncOddsWorker:
     def __init__(self) -> None:
@@ -90,35 +88,95 @@ class AsyncOddsWorker:
         try:
             raw_event = json.loads(payload)
         except json.JSONDecodeError as exc:
-            logger.warning("Mensagem descartada: JSON invalido: %s", exc)
+            logger.warning("Mensagem descartada: JSON inválido: %s", exc)
+            return
+
+        pinnacle_raw = raw_event.get("pinnacle_odds")
+        if not pinnacle_raw:
+            logger.warning("Evento %s descartado: Sem dados da Pinnacle.", event_id(raw_event))
             return
 
         try:
-            odds = extract_1x2_odds(raw_event)
-            fair_probs = build_fair_probability_baseline(odds)
+            pinnacle_odds = validate_odds(pinnacle_raw)
+            # A fair probability baseline SEMPRE derivada do shape (Pinnacle)
+            fair_probs = build_fair_probability_baseline(pinnacle_odds)
         except (KeyError, TypeError, ValueError) as exc:
-            logger.warning("Mensagem descartada: odds 1X2 invalidas: %s", exc)
+            logger.warning("Mensagem descartada: odds Pinnacle inválidas: %s", exc)
             return
 
         home_team = str(raw_event.get("home_team") or raw_event.get("home") or "Home")
         away_team = str(raw_event.get("away_team") or raw_event.get("away") or "Away")
-        bookmaker = str(raw_event.get("bookmaker") or raw_event.get("raw_source") or BOOKMAKER_NAME)
 
-        analyze_result = self.detector.analyze(
-            home_team=home_team,
-            away_team=away_team,
-            our_probs=fair_probs,
-            pinnacle_odds=odds,
-            soft_odds={bookmaker: odds},
+        # 1. Persistência do baseline (Pinnacle) no histórico de CLV
+        pinnacle_name = str(pinnacle_raw.get("bookmaker", "Pinnacle"))
+        await self.persist_odds_history(raw_event, pinnacle_odds, pinnacle_name)
+
+        soft_odds_list = raw_event.get("soft_odds", [])
+        for soft_raw in soft_odds_list:
+            try:
+                soft_odds = validate_odds(soft_raw)
+            except (KeyError, TypeError, ValueError) as exc:
+                logger.warning("Odds Soft ignoradas devido a dados inválidos: %s", exc)
+                continue
+            
+            soft_name = str(soft_raw.get("bookmaker", BOOKMAKER_NAME))
+            
+            # 2. Persistência da Soft sendo percorrida no loop
+            await self.persist_odds_history(raw_event, soft_odds, soft_name)
+
+            # 3. Cálculo de Edge individual
+            analyze_result = self.detector.analyze(
+                home_team=home_team,
+                away_team=away_team,
+                our_probs=fair_probs,
+                pinnacle_odds=pinnacle_odds,
+                soft_odds={soft_name: soft_odds},
+            )
+            opportunities = await analyze_result if inspect.isawaitable(analyze_result) else analyze_result
+
+            if not opportunities:
+                logger.info("Evento %s (%s) consumido sem oportunidade validada.", event_id(raw_event), soft_name)
+                continue
+
+            for opportunity in opportunities:
+                await self.persist_opportunity(raw_event, opportunity)
+
+    async def persist_odds_history(
+        self,
+        raw_event: dict[str, Any],
+        odds: dict[str, float],
+        bookmaker: str,
+    ) -> None:
+        history = OddsHistory(
+            event_id=event_id(raw_event),
+            league=raw_event.get("league"),
+            home_team=raw_event.get("home_team"),
+            away_team=raw_event.get("away_team"),
+            bookmaker=bookmaker,
+            market_type=MARKET_TYPE,
+            event_start_time=parse_event_timestamp(raw_event),
+            home_odd=float(odds["home"]),
+            draw_odd=float(odds["draw"]),
+            away_odd=float(odds["away"]),
+            raw_odds_source=raw_event,
         )
-        opportunities = await analyze_result if inspect.isawaitable(analyze_result) else analyze_result
 
-        if not opportunities:
-            logger.info("Evento %s consumido sem oportunidade validada.", event_id(raw_event))
-            return
-
-        for opportunity in opportunities:
-            await self.persist_opportunity(raw_event, opportunity)
+        try:
+            async with self.database.AsyncSessionLocal() as session:
+                session.add(history)
+                await session.commit()
+            logger.info(
+                "Histórico de odds persistido: event_id=%s bookmaker=%s home=%.4f draw=%.4f away=%.4f",
+                history.event_id,
+                history.bookmaker,
+                history.home_odd,
+                history.draw_odd,
+                history.away_odd,
+            )
+        except SQLAlchemyError as exc:
+            logger.exception("Erro de banco ao persistir histórico de odds; worker continua: %s", exc)
+        except Exception as exc:
+            logger.exception("Erro inesperado ao persistir histórico de odds; worker continua: %s", exc)
 
     async def persist_opportunity(self, raw_event: dict[str, Any], opportunity: dict[str, Any]) -> None:
         log = ValueOpportunityLog(
@@ -131,7 +189,7 @@ class AsyncOddsWorker:
             true_probability=float(opportunity["our_prob"]),
             value_edge=float(opportunity["edge_pct"]) / 100.0,
             stake=float(opportunity.get("kelly_stake") or 0.0),
-            bankroll_snapshot=float(self.detector.current_bankroll_balance),
+            bankroll_snapshot=float(getattr(self.detector, 'current_bankroll_balance', 1000.0)),
             match_details={
                 "home_team": opportunity.get("home_team") or raw_event.get("home_team"),
                 "away_team": opportunity.get("away_team") or raw_event.get("away_team"),
@@ -151,7 +209,7 @@ class AsyncOddsWorker:
             already_alerted = await self.redis_client.exists(cache_key)
             if already_alerted:
                 logger.info(
-                    "Oportunidade ja alertada nas ultimas 12h: event_id=%s selection=%s",
+                    "Oportunidade já alertada nas ultimas 12h: event_id=%s selection=%s",
                     log.event_id,
                     log.selection,
                 )
@@ -171,19 +229,16 @@ class AsyncOddsWorker:
             logger.exception("Erro inesperado ao persistir oportunidade; worker continua: %s", exc)
 
 
-def extract_1x2_odds(raw_event: dict[str, Any]) -> dict[str, float]:
-    candidates = {
-        "home": raw_event.get("home_odd") or raw_event.get("home"),
-        "draw": raw_event.get("draw_odd") or raw_event.get("draw"),
-        "away": raw_event.get("away_odd") or raw_event.get("away"),
+def validate_odds(odds_dict: Dict[str, Any]) -> Dict[str, float]:
+    """Valida e retorna os dados brutos como float maior que 1.0."""
+    odds = {
+        "home": float(odds_dict["home"]),
+        "draw": float(odds_dict["draw"]),
+        "away": float(odds_dict["away"])
     }
-
-    odds: dict[str, float] = {}
-    for selection, value in candidates.items():
-        odd = float(value)
+    for selection, odd in odds.items():
         if odd <= 1.0:
             raise ValueError(f"{selection} odd must be > 1.0")
-        odds[selection] = odd
     return odds
 
 
@@ -219,4 +274,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Worker interrompido pelo usuario.")
+        logger.info("Worker interrompido pelo usuário.")
